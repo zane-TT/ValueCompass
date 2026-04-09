@@ -224,3 +224,42 @@ def get_company_data(ticker: str) -> dict | None:
     if not company:
         return None
     return deepcopy(company)
+
+
+INDUSTRY_LABELS = {
+    "consumer_staples": {
+        "industry_level_1": "Consumer",
+        "industry_level_2": "Food & Beverage",
+        "industry_level_3": "Premium Liquor",
+    },
+    "industrials": {
+        "industry_level_1": "Industrials",
+        "industry_level_2": "Capital Goods",
+        "industry_level_3": "Hardware Manufacturing",
+    },
+}
+
+
+INDUSTRY_PEERS = {
+    "consumer_staples": [
+        {"ticker": "000858", "company_name": "Wuliangye Sample", "reason": "Comparable premium liquor operator."},
+        {"ticker": "000568", "company_name": "Luzhou Laojiao Sample", "reason": "Comparable high-margin liquor peer."},
+        {"ticker": "603369", "company_name": "Jing Brand Sample", "reason": "Useful channel and pricing comparison."},
+    ],
+    "industrials": [
+        {"ticker": "300124", "company_name": "Robotics Sample", "reason": "Comparable capital equipment peer."},
+        {"ticker": "002353", "company_name": "Jerry Sample", "reason": "Comparable manufacturing and order-cycle peer."},
+        {"ticker": "688777", "company_name": "Zhongkong Sample", "reason": "Useful asset-heavy industrial comparison."},
+    ],
+}
+
+
+def get_industry_labels(industry_key: str) -> dict | None:
+    labels = INDUSTRY_LABELS.get(industry_key)
+    if not labels:
+        return None
+    return deepcopy(labels)
+
+
+def get_industry_peers(industry_key: str) -> list[dict]:
+    return deepcopy(INDUSTRY_PEERS.get(industry_key, []))

@@ -41,3 +41,20 @@ class AnalysisResponse(BaseModel):
     margin_of_safety: str
     risk_flags: list[RiskFlag]
     memo: list[MemoSection]
+
+
+class AgentDemoRequest(BaseModel):
+    question: str = Field(..., description="Natural-language question for the LangChain + OpenAI demo.")
+    ticker: str | None = Field(default=None, description="Optional target ticker that the agent can use in tool calls.")
+
+
+class AgentToolCall(BaseModel):
+    name: str
+    args: dict
+    result: dict | list | str
+
+
+class AgentDemoResponse(BaseModel):
+    answer: str
+    model: str
+    tool_calls: list[AgentToolCall]

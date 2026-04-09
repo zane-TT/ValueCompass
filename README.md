@@ -32,6 +32,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
+Or run the PyCharm-friendly startup script:
+
+```bash
+cd backend
+python run_server.py
+```
+
 Frontend:
 
 ```bash
@@ -46,3 +53,14 @@ Frontend expects the backend at `http://localhost:8000`.
 
 This version includes a sample dataset and deterministic analysis logic so the
 full product flow is usable before live data connectors are added.
+
+## LangChain + OpenAI demo
+
+This repo also includes a backend demo that shows how to package atomic
+capabilities as tools and let an OpenAI model decide when to call them.
+
+- doc: `docs/langchain-openai-demo.md`
+- route: `POST /agent-demo`
+- core files:
+  - `backend/app/langchain_tools.py`
+  - `backend/app/langchain_demo.py`

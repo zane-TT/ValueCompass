@@ -33,14 +33,30 @@ type AnalysisResponse = {
   }>;
 };
 
+type AgentDemoResponse = {
+  answer: string;
+  model: string;
+  tool_calls: Array<{
+    name: string;
+    args: Record<string, unknown>;
+    result: Record<string, unknown> | Array<unknown> | string;
+  }>;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+
+const DEFAULT_AGENT_PROMPT =
+  "Please classify the company, find peers, and tell me whether the valuation should be compared on quality or assets.";
 
 export function AnalysisWorkspace() {
   const [ticker, setTicker] = useState("600519");
   const [sampleTickers, setSampleTickers] = useState<SampleTicker[]>([]);
-  const [result, setResult] = useState<AnalysisResponse | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResponse | null>(null);
+  const [agentResult, setAgentResult] = useState<AgentDemoResponse | null>(null);
+  const [agentPrompt, setAgentPrompt] = useState(DEFAULT_AGENT_PROMPT);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [agentLoading, setAgentLoading] = useState(false);
 
   useEffect(() => {
     const loadSamples = async () => {
@@ -61,7 +77,7 @@ export function AnalysisWorkspace() {
 
   const analyze = async (nextTicker?: string) => {
     const target = nextTicker ?? ticker;
-    setLoading(true);
+    setAnalysisLoading(true);
     setError(null);
 
     try {
@@ -80,11 +96,43 @@ export function AnalysisWorkspace() {
 
       const data = (await res.json()) as AnalysisResponse;
       setTicker(target);
-      setResult(data);
+      setAnalysisResult(data);
     } catch (analysisError) {
       setError(analysisError instanceof Error ? analysisError.message : "Analysis failed.");
     } finally {
-      setLoading(false);
+      setAnalysisLoading(false);
+    }
+  };
+
+  const runAgentDemo = async (nextTicker?: string) => {
+    const target = nextTicker ?? ticker;
+    setAgentLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/agent-demo`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          ticker: target,
+          question: agentPrompt
+        })
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail ?? "Agent demo failed.");
+      }
+
+      const data = (await res.json()) as AgentDemoResponse;
+      setTicker(target);
+      setAgentResult(data);
+    } catch (agentError) {
+      setError(agentError instanceof Error ? agentError.message : "Agent demo failed.");
+    } finally {
+      setAgentLoading(false);
     }
   };
 
@@ -93,54 +141,124 @@ export function AnalysisWorkspace() {
   }, []);
 
   return (
-    <section className="grid">
-      <aside className="panel">
-        <h2>Run Analysis</h2>
-        <div className="form-stack">
+    <section className="workspace-shell">
+      <aside className="control-rail">
+        <section className="panel control-panel">
+          <div className="eyebrow">Control Center</div>
+          <h2>Research Workspace</h2>
+          <div className="form-stack">
+            <label className="label">
+              Target ticker
+              <input
+                className="input"
+                value={ticker}
+                onChange={(event) => setTicker(event.target.value)}
+                placeholder="Enter ticker"
+              />
+            </label>
+
+            <div className="button-row">
+              <button className="button primary" onClick={() => void analyze()} disabled={analysisLoading}>
+                {analysisLoading ? "Analyzing..." : "Run MVP Analysis"}
+              </button>
+              <button className="button secondary" onClick={() => void runAgentDemo()} disabled={agentLoading}>
+                {agentLoading ? "Running agent..." : "Run LangChain Demo"}
+              </button>
+            </div>
+
+            <div className="hint">
+              The left rail is for operations. The right side is the actual
+              research output surface.
+            </div>
+          </div>
+        </section>
+
+        <section className="panel control-panel">
+          <div className="eyebrow">Agent Prompt</div>
+          <h2>Tool-Calling Demo</h2>
           <label className="label">
-            Ticker
-            <input
-              className="input"
-              value={ticker}
-              onChange={(event) => setTicker(event.target.value)}
-              placeholder="Enter ticker"
+            Question for the agent
+            <textarea
+              className="input textarea"
+              value={agentPrompt}
+              onChange={(event) => setAgentPrompt(event.target.value)}
             />
           </label>
+        </section>
 
-          <div className="button-row">
-            <button className="button primary" onClick={() => void analyze()} disabled={loading}>
-              {loading ? "Analyzing..." : "Analyze"}
-            </button>
-          </div>
-
-          <div className="hint">
-            Current MVP includes built-in sample data. Start with a sample ticker
-            and replace the data connector later.
-          </div>
-
+        <section className="panel control-panel">
+          <div className="eyebrow">Sample Universe</div>
+          <h2>Quick Load</h2>
           <ul className="meta-list">
             {sampleTickers.map((item) => (
               <li key={item.ticker}>
                 <strong>{item.ticker}</strong> {item.name}
-                <div style={{ marginTop: 10 }}>
-                  <button
-                    className="button secondary"
-                    onClick={() => void analyze(item.ticker)}
-                    disabled={loading}
-                  >
-                    Load sample
+                <div className="button-row" style={{ marginTop: 10 }}>
+                  <button className="button secondary" onClick={() => void analyze(item.ticker)} disabled={analysisLoading}>
+                    Analysis
+                  </button>
+                  <button className="button secondary" onClick={() => void runAgentDemo(item.ticker)} disabled={agentLoading}>
+                    Agent
                   </button>
                 </div>
               </li>
             ))}
           </ul>
-
           {error ? <div className="risk-item">{error}</div> : null}
-        </div>
+        </section>
       </aside>
 
-      <div className="results">
-        {result ? <AnalysisResults result={result} /> : <div className="empty-state">Analysis output will appear here.</div>}
+      <div className="content-stage">
+        <section className="workspace-summary">
+          <div className="summary-card">
+            <div className="eyebrow">ValueCompass</div>
+            <h2>Two parallel surfaces</h2>
+            <p className="muted">
+              The left side drives the workflow. The right side lets you compare
+              deterministic research output with LLM-orchestrated tool usage.
+            </p>
+          </div>
+          <div className="summary-grid">
+            <div className="summary-stat">
+              <span className="summary-label">MVP Mode</span>
+              <strong>Financial quality + memo</strong>
+            </div>
+            <div className="summary-stat">
+              <span className="summary-label">Agent Mode</span>
+              <strong>LangChain + OpenAI tool calling</strong>
+            </div>
+          </div>
+        </section>
+
+        <section className="dual-results">
+          <div className="results-column">
+            <div className="column-header">
+              <div>
+                <div className="eyebrow">Deterministic Pipeline</div>
+                <h2>MVP Analysis</h2>
+              </div>
+            </div>
+            {analysisResult ? (
+              <AnalysisResults result={analysisResult} />
+            ) : (
+              <div className="empty-state">MVP analysis output will appear here.</div>
+            )}
+          </div>
+
+          <div className="results-column">
+            <div className="column-header">
+              <div>
+                <div className="eyebrow">Agent Orchestration</div>
+                <h2>LangChain Demo</h2>
+              </div>
+            </div>
+            {agentResult ? (
+              <AgentDemoResults result={agentResult} />
+            ) : (
+              <div className="empty-state">LangChain tool-calling output will appear here.</div>
+            )}
+          </div>
+        </section>
       </div>
     </section>
   );
@@ -148,7 +266,7 @@ export function AnalysisWorkspace() {
 
 function AnalysisResults({ result }: { result: AnalysisResponse }) {
   return (
-    <>
+    <div className="results">
       <section className="result-card">
         <div className="result-header">
           <div>
@@ -215,6 +333,59 @@ function AnalysisResults({ result }: { result: AnalysisResponse }) {
           ))}
         </div>
       </section>
-    </>
+    </div>
+  );
+}
+
+function AgentDemoResults({ result }: { result: AgentDemoResponse }) {
+  return (
+    <div className="results">
+      <section className="result-card">
+        <div className="result-header">
+          <div>
+            <div className="eyebrow">OpenAI Model</div>
+            <h2>{result.model}</h2>
+            <p className="muted">
+              This panel shows how the model selected atomic tools and then
+              synthesized a final answer.
+            </p>
+          </div>
+          <div className="score-pill">Tool calls {result.tool_calls.length}</div>
+        </div>
+      </section>
+
+      <section className="result-card">
+        <h3>Final Answer</h3>
+        <article className="memo-section" style={{ marginTop: 16 }}>
+          <p className="muted">{result.answer}</p>
+        </article>
+      </section>
+
+      <section className="result-card">
+        <h3>Tool Calls</h3>
+        <div className="tool-call-list" style={{ marginTop: 16 }}>
+          {result.tool_calls.length === 0 ? (
+            <div className="risk-item">The model answered without calling tools.</div>
+          ) : (
+            result.tool_calls.map((toolCall, index) => (
+              <article className="tool-card" key={`${toolCall.name}-${index}`}>
+                <div className="tool-card-header">
+                  <strong>{toolCall.name}</strong>
+                  <span className="tool-seq">#{index + 1}</span>
+                </div>
+                <div className="tool-block">
+                  <div className="tool-label">Args</div>
+                  <pre>{JSON.stringify(toolCall.args, null, 2)}</pre>
+                </div>
+                <div className="tool-block">
+                  <div className="tool-label">Result</div>
+                  <pre>{JSON.stringify(toolCall.result, null, 2)}</pre>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
