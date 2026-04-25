@@ -3,12 +3,22 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .langchain_demo import run_langchain_openai_demo
-from .models import AgentDemoRequest, AgentDemoResponse, AnalysisRequest, AnalysisResponse
+from .models import (
+    AgentDemoRequest,
+    AgentDemoResponse,
+    AnalysisRequest,
+    AnalysisResponse,
+    BulletinItemModel,
+    FinancialReportRequest,
+    FinancialReportResponse,
+)
+from .scraper import get_annual_reports, get_quarterly_reports, get_semiannual_reports
 from .services import run_analysis
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -64,4 +74,38 @@ def agent_demo(request: AgentDemoRequest) -> AgentDemoResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         print(f"agent_demo unexpected error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/financial-reports", response_model=FinancialReportResponse)
+async def get_financial_reports(request: FinancialReportRequest) -> FinancialReportResponse:
+    try:
+        if request.report_type == "annual":
+            report = await get_annual_reports(request.ticker)
+        elif request.report_type == "semiannual":
+            report = await get_semiannual_reports(request.ticker)
+        elif request.report_type in ("q1", "q3"):
+            quarter = int(request.report_type[1])
+            report = await get_quarterly_reports(request.ticker, quarter)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid report type")
+        
+        return FinancialReportResponse(
+            ticker=report.ticker,
+            company_name=report.company_name,
+            bulletins=[
+                BulletinItemModel(
+                    title=b.title,
+                    publish_date=b.publish_date,
+                    url=b.url,
+                    bulletin_type=b.bulletin_type
+                )
+                for b in report.bulletins
+            ],
+            fetched_at=report.fetched_at
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch from Sina Finance: {str(exc)}")
+    except Exception as exc:
+        print(f"get_financial_reports unexpected error: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc

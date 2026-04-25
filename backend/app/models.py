@@ -58,3 +58,25 @@ class AgentDemoResponse(BaseModel):
     answer: str
     model: str
     tool_calls: list[AgentToolCall]
+
+
+class BulletinItemModel(BaseModel):
+    title: str
+    publish_date: str
+    url: str
+    bulletin_type: str
+
+
+class FinancialReportRequest(BaseModel):
+    ticker: str = Field(..., description="Stock ticker symbol (e.g., 600519)")
+    report_type: Literal["annual", "semiannual", "q1", "q3"] = Field(
+        default="annual",
+        description="Type of report: annual (年度报告), semiannual (半年报), q1 (一季报), q3 (三季报)"
+    )
+
+
+class FinancialReportResponse(BaseModel):
+    ticker: str
+    company_name: str
+    bulletins: list[BulletinItemModel]
+    fetched_at: str
