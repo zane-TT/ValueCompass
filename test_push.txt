@@ -1,3 +1,0 @@
-# Test file to check git push functionality
-
-This file is created to test if git push works properly.
