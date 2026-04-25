@@ -80,3 +80,25 @@ class FinancialReportResponse(BaseModel):
     company_name: str
     bulletins: list[BulletinItemModel]
     fetched_at: str
+
+
+class YearlyFinancialData(BaseModel):
+    year: str
+    revenue: float | None
+    net_profit: float | None
+    total_assets: float | None
+    pe_ratio: float | None
+    pb_ratio: float | None
+
+
+class FinancialHistoryRequest(BaseModel):
+    ticker: str = Field(..., description="Stock ticker symbol (e.g., 600519)")
+    start_year: str = Field(default="2010", description="Start year for data retrieval")
+    end_year: str = Field(default="2025", description="End year for data retrieval")
+
+
+class FinancialHistoryResponse(BaseModel):
+    ticker: str
+    company_name: str
+    yearly_data: list[YearlyFinancialData]
+    fetched_at: str

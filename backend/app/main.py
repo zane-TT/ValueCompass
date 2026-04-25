@@ -15,10 +15,18 @@ from .models import (
     AnalysisRequest,
     AnalysisResponse,
     BulletinItemModel,
+    FinancialHistoryRequest,
+    FinancialHistoryResponse,
     FinancialReportRequest,
     FinancialReportResponse,
+    YearlyFinancialData,
 )
-from .scraper import get_annual_reports, get_quarterly_reports, get_semiannual_reports
+from .scraper import (
+    get_annual_reports,
+    get_financial_history,
+    get_quarterly_reports,
+    get_semiannual_reports,
+)
 from .services import run_analysis
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -108,4 +116,32 @@ async def get_financial_reports(request: FinancialReportRequest) -> FinancialRep
         raise HTTPException(status_code=502, detail=f"Failed to fetch from Sina Finance: {str(exc)}")
     except Exception as exc:
         print(f"get_financial_reports unexpected error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/financial-history", response_model=FinancialHistoryResponse)
+async def get_financial_history_api(request: FinancialHistoryRequest) -> FinancialHistoryResponse:
+    try:
+        result = await get_financial_history(request.ticker, request.start_year, request.end_year)
+        
+        return FinancialHistoryResponse(
+            ticker=result.ticker,
+            company_name=result.company_name,
+            yearly_data=[
+                YearlyFinancialData(
+                    year=data.year,
+                    revenue=data.revenue,
+                    net_profit=data.net_profit,
+                    total_assets=data.total_assets,
+                    pe_ratio=data.pe_ratio,
+                    pb_ratio=data.pb_ratio
+                )
+                for data in result.yearly_data
+            ],
+            fetched_at=result.fetched_at
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch financial data: {str(exc)}")
+    except Exception as exc:
+        print(f"get_financial_history_api unexpected error: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
