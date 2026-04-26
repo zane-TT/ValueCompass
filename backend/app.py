@@ -58,6 +58,16 @@ LIABILITY_MAPPING = {
 
 REVENUE_CANDIDATES = ["营业总收入", "营业收入", "TOTAL_OPERATE_INCOME", "OPERATE_INCOME"]
 
+NET_PROFIT_CANDIDATES = [
+    "归属于母公司所有者的净利润",
+    "归属于母公司股东的净利润",
+    "归母净利润",
+    "净利润",
+    "PARENT_NETPROFIT",
+    "NETPROFIT_PARENT_COMPANY_OWNERS",
+    "NETPROFIT",
+]
+
 
 def ensure_cache_dir() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -279,6 +289,16 @@ def find_revenue_column(df: pd.DataFrame) -> str:
     raise ValueError("利润表中未找到营业总收入字段，请查看后端打印的 columns")
 
 
+def find_net_profit_column(df: pd.DataFrame) -> str:
+    for column in NET_PROFIT_CANDIDATES:
+        if column in df.columns:
+            return column
+
+    print("[ERROR] Net profit field not matched, available columns:")
+    print(df.columns.tolist())
+    raise ValueError("利润表中未找到净利润字段，请查看后端打印的 columns")
+
+
 def build_revenue_bars(df: pd.DataFrame, years: int) -> list[dict]:
     if df is None or df.empty:
         raise ValueError("未获取到利润表数据")
@@ -306,9 +326,34 @@ def build_revenue_bars(df: pd.DataFrame, years: int) -> list[dict]:
     ]
 
 
-def build_market_cap_line(
-    df: pd.DataFrame, years: int, revenue_bars: list[dict]
-) -> list[dict]:
+def build_profit_bars(df: pd.DataFrame, years: int) -> list[dict]:
+    if df is None or df.empty:
+        raise ValueError("未获取到利润表数据")
+
+    profit_column = find_net_profit_column(df)
+    date_column = "REPORT_DATE" if "REPORT_DATE" in df.columns else "报告期"
+    if date_column not in df.columns:
+        print("[ERROR] Profit date field not matched, available columns:")
+        print(df.columns.tolist())
+        raise ValueError("利润表中未找到报告期字段，请查看后端打印的 columns")
+
+    profit_df = df[[date_column, profit_column]].copy()
+    profit_df["date"] = pd.to_datetime(profit_df[date_column], errors="coerce")
+    profit_df["value"] = profit_df[profit_column].apply(parse_ak_value)
+    profit_df = profit_df.dropna(subset=["date"]).sort_values("date")
+
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(years=years)
+    profit_df = profit_df[profit_df["date"] >= cutoff]
+    if profit_df.empty:
+        raise ValueError(f"最近 {years} 年没有可用的净利润数据")
+
+    return [
+        {"date": row.date.strftime("%Y-%m-%d"), "value": to_yi(row.value)}
+        for row in profit_df.itertuples()
+    ]
+
+
+def build_market_cap_line(df: pd.DataFrame, years: int, report_points: list[dict]) -> list[dict]:
     if df is None or df.empty:
         raise ValueError("未获取到总市值数据")
 
@@ -327,25 +372,25 @@ def build_market_cap_line(
     if line_df.empty:
         raise ValueError(f"最近 {years} 年没有可用的总市值数据")
 
-    revenue_dates = []
-    for item in revenue_bars:
-        revenue_date = pd.to_datetime(item["date"], errors="coerce")
-        if pd.notna(revenue_date):
-            revenue_dates.append(revenue_date.normalize())
+    report_dates = []
+    for item in report_points:
+        report_date = pd.to_datetime(item["date"], errors="coerce")
+        if pd.notna(report_date):
+            report_dates.append(report_date.normalize())
 
-    if not revenue_dates:
-        raise ValueError("未获取到可用于对齐市值的季度营收日期")
+    if not report_dates:
+        raise ValueError("未获取到可用于对齐市值的报告期日期")
 
     quarterly_points: list[dict] = []
-    for revenue_date in revenue_dates:
-        matched = line_df[line_df["date"] <= revenue_date]
+    for report_date in report_dates:
+        matched = line_df[line_df["date"] <= report_date]
         if matched.empty:
             continue
 
         latest_row = matched.iloc[-1]
         quarterly_points.append(
             {
-                "date": revenue_date.strftime("%Y-%m-%d"),
+                "date": report_date.strftime("%Y-%m-%d"),
                 "value": round(float(latest_row["value"]), 2),
             }
         )
@@ -372,6 +417,24 @@ def generate_revenue_market_cap_conclusion(
     return "业绩增长和市值走势需要结合观察"
 
 
+def generate_profit_market_cap_conclusion(
+    profit_bars: list[dict], market_cap_line: list[dict]
+) -> str:
+    if not profit_bars or not market_cap_line:
+        return "净利润和市值走势需要结合观察"
+
+    profit_growth = profit_bars[-1]["value"] - profit_bars[0]["value"]
+    market_cap_growth = market_cap_line[-1]["value"] - market_cap_line[0]["value"]
+
+    if profit_growth > 0 and market_cap_growth <= 0:
+        return "如果净利润增长但市值不涨，可能是估值压缩"
+    if profit_growth <= 0 and market_cap_growth > 0:
+        return "如果净利润下降但市值上涨，可能是市场在提前交易预期"
+    if profit_growth > 0 and market_cap_growth > profit_growth:
+        return "如果市值涨得比净利润快，可能是估值扩张"
+    return "净利润和市值走势需要结合观察"
+
+
 def get_revenue_market_cap_payload(stock: str, years: int) -> dict:
     revenue_bars = build_revenue_bars(load_profit_sheet(stock), years)
     market_cap_line = build_market_cap_line(load_market_cap(stock, years), years, revenue_bars)
@@ -386,6 +449,23 @@ def get_revenue_market_cap_payload(stock: str, years: int) -> dict:
         "marketCapLine": market_cap_line,
         "conclusion": generate_revenue_market_cap_conclusion(revenue_bars, market_cap_line),
     }
+
+
+def get_profit_market_cap_payload(stock: str, years: int) -> dict:
+    profit_bars = build_profit_bars(load_profit_sheet(stock), years)
+    market_cap_line = build_market_cap_line(load_market_cap(stock, years), years, profit_bars)
+
+    return {
+        "stock": stock,
+        "title": f"{stock} 净利润与市值对比",
+        "unit": "亿元",
+        "leftAxisName": "归母净利润",
+        "rightAxisName": "总市值",
+        "profitBars": profit_bars,
+        "marketCapLine": market_cap_line,
+        "conclusion": generate_profit_market_cap_conclusion(profit_bars, market_cap_line),
+    }
+
 
 def valuation_period_from_years(years: int) -> str:
     if years <= 1:
@@ -429,7 +509,7 @@ def build_pe_trend_payload(stock: str, years: int) -> dict:
     pe_df["date"] = pd.to_datetime(pe_df["date"], errors="coerce")
     pe_df["value"] = pd.to_numeric(pe_df["value"], errors="coerce")
 
-    # 过滤空值和异常值；市盈率小于等于 0 一般不适合直接画估值区间
+    # 保持你当前逻辑：只展示正市盈率。
     pe_df = pe_df.dropna(subset=["date", "value"])
     pe_df = pe_df[pe_df["value"] > 0]
     pe_df = pe_df.sort_values("date")
@@ -442,7 +522,7 @@ def build_pe_trend_payload(stock: str, years: int) -> dict:
 
     mean_line = round(float(pe_df["value"].mean()), 2)
 
-    # 最像你截图的方式：均值线上下各 1 个标准差
+    # 保持你当前逻辑：均值线上下各 1 个标准差。
     std_value = float(pe_df["value"].std())
     low_line = round(max(0, mean_line - std_value), 2)
     high_line = round(mean_line + std_value, 2)
@@ -536,6 +616,28 @@ def api_revenue_market_cap():
         return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
 
 
+@app.get("/api/profit-market-cap")
+def api_profit_market_cap():
+    stock = request.args.get("stock", "600519").strip() or "600519"
+    years_param = request.args.get("years", "8")
+    refresh = request.args.get("refresh") == "1"
+
+    try:
+        years = normalize_years(years_param, default=8)
+
+        if not refresh:
+            cached_payload = load_cached_payload("profit_market_cap_v1", stock, years)
+            if cached_payload is not None:
+                return jsonify(cached_payload)
+
+        payload = get_profit_market_cap_payload(stock=stock, years=years)
+        save_cached_payload(payload, "profit_market_cap_v1", stock, years)
+        return jsonify(payload)
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+
+
 @app.get("/")
 def health_message():
     return jsonify(
@@ -543,6 +645,8 @@ def health_message():
             "message": "Flask API is running. Use the Next frontend for the UI.",
             "balanceApi": "/api/balance?stock=600519",
             "trendApi": "/api/revenue-market-cap?stock=000333&years=8",
+            "profitTrendApi": "/api/profit-market-cap?stock=600519&years=8",
+            "peApi": "/api/pe-trend?stock=600519&years=8",
         }
     )
 
