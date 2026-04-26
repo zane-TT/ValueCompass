@@ -39,6 +39,12 @@ cd backend
 python run_server.py
 ```
 
+Recommended Python version for the backend is `3.11` or `3.12`.
+Newer Python releases such as `3.14` can force scientific dependencies onto a
+source-build path on Windows.
+If you want to use the LangChain demo route, copy `backend/.env.example` to
+`backend/.env` and set `OPENAI_API_KEY`.
+
 Frontend:
 
 ```bash

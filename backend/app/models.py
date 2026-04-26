@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -45,7 +45,7 @@ class AnalysisResponse(BaseModel):
 
 class AgentDemoRequest(BaseModel):
     question: str = Field(..., description="Natural-language question for the LangChain + OpenAI demo.")
-    ticker: str | None = Field(default=None, description="Optional target ticker that the agent can use in tool calls.")
+    ticker: Optional[str] = Field(default=None, description="Optional target ticker that the agent can use in tool calls.")
 
 
 class AgentToolCall(BaseModel):
@@ -84,11 +84,11 @@ class FinancialReportResponse(BaseModel):
 
 class YearlyFinancialData(BaseModel):
     year: str
-    revenue: float | None
-    net_profit: float | None
-    total_assets: float | None
-    pe_ratio: float | None
-    pb_ratio: float | None
+    revenue: Optional[float]
+    net_profit: Optional[float]
+    total_assets: Optional[float]
+    pe_ratio: Optional[float]
+    pb_ratio: Optional[float]
 
 
 class FinancialHistoryRequest(BaseModel):
