@@ -25,19 +25,17 @@ button,
 input {
   font: inherit;
 }
-
 .page-shell {
-  max-width: 1260px;
+  width: 100%;
+  max-width: 1680px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 16px 32px;
 }
-
 .chart-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
-
 .chart-block {
   min-width: 0;
 }
@@ -46,10 +44,9 @@ input {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
+  padding: 14px;
+  margin-bottom: 14px;
 }
-
 .inner-panel {
   margin-top: 16px;
   margin-bottom: 0;
@@ -192,9 +189,8 @@ input {
 }
 
 .compact-chart {
-  height: 520px;
+  height: 460px;
 }
-
 .conclusion-box {
   padding: 14px 16px;
   border-radius: 6px;
@@ -213,14 +209,29 @@ input {
   border: 1px solid var(--line);
   font-size: 12px;
 }
-
 @media (max-width: 960px) {
+  .page-shell {
+    padding: 12px;
+  }
+
   .chart-columns,
   .grid-two {
     grid-template-columns: 1fr;
   }
 
+  .field {
+    width: 100%;
+  }
+
   .field input {
     width: 100%;
+  }
+
+  .query-button {
+    width: 100%;
+  }
+
+  .compact-chart {
+    height: 380px;
   }
 }

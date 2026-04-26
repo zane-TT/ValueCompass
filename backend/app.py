@@ -387,6 +387,116 @@ def get_revenue_market_cap_payload(stock: str, years: int) -> dict:
         "conclusion": generate_revenue_market_cap_conclusion(revenue_bars, market_cap_line),
     }
 
+def valuation_period_from_years(years: int) -> str:
+    if years <= 1:
+        return "近一年"
+    if years <= 3:
+        return "近三年"
+    if years <= 5:
+        return "近五年"
+    if years <= 10:
+        return "近十年"
+    return "全部"
+
+
+def load_pe_ttm(stock: str, years: int) -> pd.DataFrame:
+    period = valuation_period_from_years(years)
+    print(f"[INFO] Fetching PE TTM, stock={stock}, period={period}")
+
+    df = ak.stock_zh_valuation_baidu(
+        symbol=stock,
+        indicator="市盈率(TTM)",
+        period=period,
+    )
+
+    print("[DEBUG] PE columns:")
+    print(df.columns.tolist())
+    return df
+
+
+def build_pe_trend_payload(stock: str, years: int) -> dict:
+    df = load_pe_ttm(stock, years)
+
+    if df is None or df.empty:
+        raise ValueError("未获取到市盈率数据")
+
+    if "date" not in df.columns or "value" not in df.columns:
+        print("[ERROR] PE fields not matched, available columns:")
+        print(df.columns.tolist())
+        raise ValueError("市盈率数据字段不符合预期，请查看后端打印的 columns")
+
+    pe_df = df[["date", "value"]].copy()
+    pe_df["date"] = pd.to_datetime(pe_df["date"], errors="coerce")
+    pe_df["value"] = pd.to_numeric(pe_df["value"], errors="coerce")
+
+    # 过滤空值和异常值；市盈率小于等于 0 一般不适合直接画估值区间
+    pe_df = pe_df.dropna(subset=["date", "value"])
+    pe_df = pe_df[pe_df["value"] > 0]
+    pe_df = pe_df.sort_values("date")
+
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(years=years)
+    pe_df = pe_df[pe_df["date"] >= cutoff]
+
+    if pe_df.empty:
+        raise ValueError(f"最近 {years} 年没有可用的市盈率数据")
+
+    mean_line = round(float(pe_df["value"].mean()), 2)
+
+    # 最像你截图的方式：均值线上下各 1 个标准差
+    std_value = float(pe_df["value"].std())
+    low_line = round(max(0, mean_line - std_value), 2)
+    high_line = round(mean_line + std_value, 2)
+
+    pe_line = [
+        {
+            "date": row.date.strftime("%Y-%m-%d"),
+            "value": round(float(row.value), 2),
+        }
+        for row in pe_df.itertuples()
+    ]
+
+    latest_pe = pe_line[-1]["value"]
+    if latest_pe <= low_line:
+        conclusion = "当前市盈率接近低估区间"
+    elif latest_pe >= high_line:
+        conclusion = "当前市盈率接近高估区间"
+    else:
+        conclusion = "当前市盈率处于正常估值区间"
+
+    return {
+        "stock": stock,
+        "title": f"{stock} 市盈率趋势",
+        "unit": "倍",
+        "peLine": pe_line,
+        "meanLine": mean_line,
+        "lowLine": low_line,
+        "highLine": high_line,
+        "conclusion": conclusion,
+    }
+
+
+@app.get("/api/pe-trend")
+def api_pe_trend():
+    stock = request.args.get("stock", "000333").strip() or "000333"
+    years_param = request.args.get("years", "8")
+    refresh = request.args.get("refresh") == "1"
+
+    try:
+        years = normalize_years(years_param, default=8)
+
+        if not refresh:
+            cached_payload = load_cached_payload("pe_trend_v1", stock, years)
+            if cached_payload is not None:
+                return jsonify(cached_payload)
+
+        payload = build_pe_trend_payload(stock=stock, years=years)
+        save_cached_payload(payload, "pe_trend_v1", stock, years)
+        return jsonify(payload)
+
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+
 
 @app.get("/api/balance")
 def api_balance():
