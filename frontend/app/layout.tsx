@@ -1,16 +1,14 @@
 import type { Metadata } from "next";
-import { ReactNode } from "react";
-
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Equity Research Agent",
-  description: "Financial quality, valuation, and memo generation for stock research."
+  title: "财报可视化分析系统",
+  description: "AKShare + Flask + Next.js + ECharts",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body>{children}</body>
     </html>
   );

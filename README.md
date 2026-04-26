@@ -1,72 +1,71 @@
-# Equity Research Agent MVP
+# 财报可视化分析系统
 
-An MVP for a stock research AI agent using:
+当前仓库收敛为两个图表功能：
 
-- `Next.js` for the frontend and server-rendered UI
-- `FastAPI` for the backend analysis pipeline
+1. 资产负债结构图
+2. 业绩和市值趋势对比图
 
-## MVP features
+前后端结构：
 
-- Read annual / quarterly statement data and normalize key metrics
-- Detect financial quality risks
-- Produce industry-aware valuation commentary
-- Generate an investment memo:
-  - thesis
-  - valuation
-  - risks
-  - falsification points
+- `backend/`：Flask 后端 API
+- `frontend/`：Next.js 前端页面
 
-## Project structure
+## 安装依赖
 
-- `frontend/` Next.js app
-- `backend/` FastAPI service
-- `docs/` architecture notes
-
-## Run locally
-
-Backend:
+### 后端
 
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+cd D:\github\ValueCompass\backend
+D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Or run the PyCharm-friendly startup script:
+### 前端
 
 ```bash
-cd backend
-python run_server.py
-```
-
-Recommended Python version for the backend is `3.11` or `3.12`.
-Newer Python releases such as `3.14` can force scientific dependencies onto a
-source-build path on Windows.
-If you want to use the LangChain demo route, copy `backend/.env.example` to
-`backend/.env` and set `OPENAI_API_KEY`.
-
-Frontend:
-
-```bash
-cd frontend
+cd D:\github\ValueCompass\frontend
 npm install
+```
+
+## 启动命令
+
+### 启动 Flask 后端
+
+```bash
+cd D:\github\ValueCompass\backend
+D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
+```
+
+默认地址：
+
+- `http://127.0.0.1:5001`
+
+### 启动 Next 前端
+
+```bash
+cd D:\github\ValueCompass\frontend
 npm run dev
 ```
 
-Frontend expects the backend at `http://localhost:8000`.
+默认地址：
 
-## Current MVP scope
+- `http://127.0.0.1:3000`
 
-This version includes a sample dataset and deterministic analysis logic so the
-full product flow is usable before live data connectors are added.
+## 接口
 
-## LangChain + OpenAI demo
+### 1. 资产负债结构图
 
-This repo also includes a backend demo that shows how to package atomic
-capabilities as tools and let an OpenAI model decide when to call them.
+```text
+GET /api/balance?stock=600519&period=20250630
+```
 
-- doc: `docs/langchain-openai-demo.md`
-- route: `POST /agent-demo`
-- core files:
-  - `backend/app/langchain_tools.py`
-  - `backend/app/langchain_demo.py`
+### 2. 业绩和市值趋势对比图
+
+```text
+GET /api/revenue-market-cap?stock=000333&years=8
+```
+
+## 说明
+
+- 前端页面使用 Next.js 实现
+- Flask 只负责 API，不再返回 HTML 页面
+- 如果 AKShare 字段名变化，后端会打印 `columns` 方便排查

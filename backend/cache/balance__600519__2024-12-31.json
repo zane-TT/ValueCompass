@@ -1,0 +1,168 @@
+{
+  "stock": "600519",
+  "title": "600519 资产负债表",
+  "reportDate": "2024-12-31",
+  "unit": "亿元",
+  "treeData": {
+    "name": "资产负债表",
+    "children": [
+      {
+        "name": "资产",
+        "children": [
+          {
+            "name": "现金",
+            "value": 592.96
+          },
+          {
+            "name": "应收款",
+            "value": 0.19
+          },
+          {
+            "name": "预付款",
+            "value": 0.27
+          },
+          {
+            "name": "存货",
+            "value": 543.43
+          },
+          {
+            "name": "其他流动",
+            "value": 1.6
+          },
+          {
+            "name": "长期投资",
+            "value": 0.0
+          },
+          {
+            "name": "固定资产",
+            "value": 218.71
+          },
+          {
+            "name": "无形&商誉",
+            "value": 88.5
+          },
+          {
+            "name": "其他固定",
+            "value": 2.32
+          }
+        ]
+      },
+      {
+        "name": "负债",
+        "children": [
+          {
+            "name": "短期借款",
+            "value": 0.0
+          },
+          {
+            "name": "应付款",
+            "value": 35.15
+          },
+          {
+            "name": "预收款",
+            "value": 95.92
+          },
+          {
+            "name": "薪酬&税",
+            "value": 135.42
+          },
+          {
+            "name": "其他流动",
+            "value": 12.23
+          },
+          {
+            "name": "长期借款",
+            "value": 0.0
+          },
+          {
+            "name": "其他非流动",
+            "value": 4.17
+          }
+        ]
+      }
+    ]
+  },
+  "barData": [
+    {
+      "name": "现金",
+      "value": 592.96,
+      "type": "asset"
+    },
+    {
+      "name": "应收款",
+      "value": 0.19,
+      "type": "asset"
+    },
+    {
+      "name": "预付款",
+      "value": 0.27,
+      "type": "asset"
+    },
+    {
+      "name": "存货",
+      "value": 543.43,
+      "type": "asset"
+    },
+    {
+      "name": "其他流动",
+      "value": 1.6,
+      "type": "asset"
+    },
+    {
+      "name": "长期投资",
+      "value": 0.0,
+      "type": "asset"
+    },
+    {
+      "name": "固定资产",
+      "value": 218.71,
+      "type": "asset"
+    },
+    {
+      "name": "无形&商誉",
+      "value": 88.5,
+      "type": "asset"
+    },
+    {
+      "name": "其他固定",
+      "value": 2.32,
+      "type": "asset"
+    },
+    {
+      "name": "短期借款",
+      "value": 0.0,
+      "type": "liability"
+    },
+    {
+      "name": "应付款",
+      "value": 35.15,
+      "type": "liability"
+    },
+    {
+      "name": "预收款",
+      "value": 95.92,
+      "type": "liability"
+    },
+    {
+      "name": "薪酬&税",
+      "value": 135.42,
+      "type": "liability"
+    },
+    {
+      "name": "其他流动",
+      "value": 12.23,
+      "type": "liability"
+    },
+    {
+      "name": "长期借款",
+      "value": 0.0,
+      "type": "liability"
+    },
+    {
+      "name": "其他非流动",
+      "value": 4.17,
+      "type": "liability"
+    }
+  ],
+  "conclusion": "财务结构比较健康"
+}
