@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 
 import akshare as ak
+import akshare.stock_feature.stock_disclosure_cninfo as disclosure_cninfo
 import httpx
 import pandas as pd
+import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    bundled_python_packages = r"C:\Users\1\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages"
+    if bundled_python_packages not in sys.path:
+        sys.path.append(bundled_python_packages)
+    from pypdf import PdfReader
 
 app = Flask(__name__)
 CORS(
@@ -41,6 +54,56 @@ AI_ANALYSIS_SYSTEM_PROMPT = """
 4. 语言尽量让非财务背景的产品经理也能看懂。
 5. 不要写投资建议，不要承诺收益。
 """.strip()
+
+BUSINESS_TYPE_SYSTEM_PROMPT = """
+你是一名专业的上市公司商业模式分析师。
+
+任务：
+请根据提供的公司年报、财报数据、主营业务说明，以及结构化财务趋势数据，判断这家公司属于什么类型的公司。
+
+重要要求：
+1. 不要只根据行业名称判断。
+2. 不要只根据关键词判断。
+3. 必须根据以下证据判断：
+   - 收入主要来自哪里
+   - 利润主要来自哪里
+   - 收入增长主要来自哪里
+   - 成本结构是什么
+   - 资产结构是什么
+   - 现金流特征是什么
+4. 如果信息不足，必须说明“无法确定”，不要编造。
+5. 所有判断都要给出依据。
+6. 最终输出 JSON，且只能输出 JSON。
+
+额外判断约束：
+1. 不要因为公司有“生产、制造、包装”等环节，就直接判为“成本制造型”。
+2. 如果收入主要来自产品销售，同时毛利率高且稳定、利润集中于核心品牌产品、公司概况或主营构成显示品牌/渠道/定价权重要，应优先判为“品牌产品型”。
+3. “成本制造型”更适用于毛利率不高，核心竞争力主要来自规模、成本控制、产能效率，而不是品牌溢价。
+4. 如果证据同时支持“品牌产品型”和“成本制造型”，要明确比较毛利率、利润集中度、品牌表述和资产结构后再判断，不能偷懒。
+
+可选公司类型：
+1. 品牌产品型
+2. 成本制造型
+3. 技术产品型
+4. 履约服务型
+5. 平台撮合型
+6. 订阅服务型
+7. 项目交付型
+8. 资产运营型
+9. 金融利差型
+10. 资源周期型
+11. 混合型
+12. 无法确定
+""".strip()
+
+PROXY_ENV_KEYS = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+]
 
 ASSET_MAPPING = {
     "现金": [["货币资金"], ["总现金"]],
@@ -93,6 +156,21 @@ def ensure_cache_dir() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@contextmanager
+def temporary_disable_proxy_env():
+    original_values = {key: os.environ.get(key) for key in PROXY_ENV_KEYS}
+    try:
+        for key in PROXY_ENV_KEYS:
+            os.environ[key] = ""
+        yield
+    finally:
+        for key, value in original_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def sanitize_cache_part(value: object) -> str:
     text = str(value).strip()
     safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in text)
@@ -109,9 +187,14 @@ def load_cached_payload(prefix: str, *parts: object) -> dict | None:
     if not path.exists():
         return None
 
-    with path.open("r", encoding="utf-8") as cache_file:
-        print(f"[INFO] Cache hit: {path.name}")
-        return json.load(cache_file)
+    try:
+        with path.open("r", encoding="utf-8") as cache_file:
+            print(f"[INFO] Cache hit: {path.name}")
+            return json.load(cache_file)
+    except json.JSONDecodeError:
+        print(f"[WARN] Cache corrupted, rebuilding: {path.name}")
+        path.unlink(missing_ok=True)
+        return None
 
 
 def save_cached_payload(payload: dict, prefix: str, *parts: object) -> dict:
@@ -235,7 +318,8 @@ def generate_balance_conclusion(bar_data: list[dict]) -> str:
 
 def load_balance_sheet(stock: str) -> pd.DataFrame:
     print(f"[INFO] Fetching balance sheet, stock={stock}")
-    df = ak.stock_financial_debt_ths(symbol=stock, indicator="按报告期")
+    with temporary_disable_proxy_env():
+        df = ak.stock_financial_debt_ths(symbol=stock, indicator="按报告期")
     print("[DEBUG] Balance columns:")
     print(df.columns.tolist())
     return df
@@ -274,7 +358,8 @@ def get_balance_payload(stock: str, period: str | None) -> dict:
 def load_profit_sheet(stock: str) -> pd.DataFrame:
     em_symbol = to_em_symbol(stock)
     print(f"[INFO] Fetching quarterly profit sheet, symbol={em_symbol}")
-    df = ak.stock_profit_sheet_by_quarterly_em(symbol=em_symbol)
+    with temporary_disable_proxy_env():
+        df = ak.stock_profit_sheet_by_quarterly_em(symbol=em_symbol)
     print("[DEBUG] Profit columns:")
     print(df.columns.tolist())
     return df
@@ -293,7 +378,8 @@ def load_market_cap(stock: str, years: int) -> pd.DataFrame:
         period = "全部"
 
     print(f"[INFO] Fetching valuation, stock={stock}, period={period}")
-    df = ak.stock_zh_valuation_baidu(symbol=stock, indicator="总市值", period=period)
+    with temporary_disable_proxy_env():
+        df = ak.stock_zh_valuation_baidu(symbol=stock, indicator="总市值", period=period)
     print("[DEBUG] Valuation columns:")
     print(df.columns.tolist())
     return df
@@ -503,11 +589,12 @@ def load_pe_ttm(stock: str, years: int) -> pd.DataFrame:
     period = valuation_period_from_years(years)
     print(f"[INFO] Fetching PE TTM, stock={stock}, period={period}")
 
-    df = ak.stock_zh_valuation_baidu(
-        symbol=stock,
-        indicator="市盈率(TTM)",
-        period=period,
-    )
+    with temporary_disable_proxy_env():
+        df = ak.stock_zh_valuation_baidu(
+            symbol=stock,
+            indicator="市盈率(TTM)",
+            period=period,
+        )
 
     print("[DEBUG] PE columns:")
     print(df.columns.tolist())
@@ -647,6 +734,275 @@ def get_pe_trend_payload_with_cache(stock: str, years: int) -> dict:
     return payload
 
 
+def load_company_profile(stock: str) -> pd.DataFrame:
+    print(f"[INFO] Fetching company profile, stock={stock}")
+    with temporary_disable_proxy_env():
+        df = ak.stock_profile_cninfo(symbol=stock)
+    print("[DEBUG] Company profile columns:")
+    print(df.columns.tolist())
+    return df
+
+
+def load_main_business_composition(stock: str) -> pd.DataFrame:
+    symbol = to_em_symbol(stock)
+    print(f"[INFO] Fetching main business composition, symbol={symbol}")
+    with temporary_disable_proxy_env():
+        df = ak.stock_zygc_em(symbol=symbol)
+    print("[DEBUG] Main business columns:")
+    print(df.columns.tolist())
+    return df
+
+
+def get_company_profile_payload_with_cache(stock: str) -> dict:
+    cached_payload = load_cached_payload("company_profile_v1", stock)
+    if cached_payload is not None:
+        return cached_payload
+
+    df = load_company_profile(stock)
+    if df is None or df.empty:
+        raise ValueError(f"Unable to fetch company profile for stock {stock}.")
+
+    row = df.iloc[0]
+    payload = {
+        "stock": stock,
+        "companyName": row.get("公司名称", ""),
+        "industry": row.get("所属行业", ""),
+        "mainBusiness": row.get("主营业务", ""),
+        "businessScope": row.get("经营范围", ""),
+        "companyIntro": row.get("机构简介", ""),
+    }
+    save_cached_payload(payload, "company_profile_v1", stock)
+    return payload
+
+
+def get_main_business_payload_with_cache(stock: str) -> dict:
+    cached_payload = load_cached_payload("main_business_v1", stock)
+    if cached_payload is not None:
+        return cached_payload
+
+    df = load_main_business_composition(stock)
+    if df is None or df.empty:
+        raise ValueError(f"Unable to fetch main business composition for stock {stock}.")
+
+    df = df.copy()
+    if "报告日期" in df.columns:
+        df["报告日期_dt"] = pd.to_datetime(df["报告日期"], errors="coerce")
+        latest_date = df["报告日期_dt"].max()
+        if pd.notna(latest_date):
+            df = df[df["报告日期_dt"] == latest_date]
+
+    summary_items = []
+    for row in df.itertuples(index=False):
+        row_dict = row._asdict()
+        summary_items.append(
+            {
+                "reportDate": str(row_dict.get("报告日期") or ""),
+                "categoryType": row_dict.get("分类类型"),
+                "itemName": row_dict.get("主营构成"),
+                "revenue": to_yi(parse_ak_value(row_dict.get("主营收入"))),
+                "revenueRatio": round(float(row_dict.get("收入比例", 0) or 0), 4),
+                "cost": to_yi(parse_ak_value(row_dict.get("主营成本"))),
+                "costRatio": round(float(row_dict.get("成本比例", 0) or 0), 4),
+                "profit": to_yi(parse_ak_value(row_dict.get("主营利润"))),
+                "profitRatio": round(float(row_dict.get("利润比例", 0) or 0), 4),
+                "grossMargin": round(float(row_dict.get("毛利率", 0) or 0), 4),
+            }
+        )
+
+    payload = {
+        "stock": stock,
+        "items": summary_items,
+    }
+    save_cached_payload(payload, "main_business_v1", stock)
+    return payload
+
+
+def load_disclosure_reports(stock: str, category: str, start_date: str = "20200101", end_date: str = "20300101") -> pd.DataFrame:
+    print(f"[INFO] Fetching disclosure reports, stock={stock}, category={category}")
+    with temporary_disable_proxy_env():
+        df = ak.stock_zh_a_disclosure_report_cninfo(
+            symbol=stock,
+            category=category,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    print("[DEBUG] Disclosure report columns:")
+    print(df.columns.tolist())
+    return df
+
+
+def fetch_pdf_text_from_cninfo(adjunct_url: str, max_pages: int = 15, max_chars: int = 20000) -> str:
+    if not adjunct_url:
+        return ""
+
+    pdf_url = adjunct_url
+    if not pdf_url.startswith("http"):
+        pdf_url = f"http://static.cninfo.com.cn/{adjunct_url.lstrip('/')}"
+
+    with temporary_disable_proxy_env():
+        response = requests.get(pdf_url, timeout=60, proxies={"http": None, "https": None})
+        response.raise_for_status()
+
+    reader = PdfReader(BytesIO(response.content))
+    parts: list[str] = []
+    for page in reader.pages[:max_pages]:
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        if text:
+            parts.append(text)
+        if sum(len(item) for item in parts) >= max_chars:
+            break
+
+    combined_text = "\n".join(parts).strip()
+    return combined_text[:max_chars]
+
+
+def get_latest_report_text_payload_with_cache(stock: str, category: str, cache_key: str) -> dict:
+    cached_payload = load_cached_payload(cache_key, stock)
+    if cached_payload is not None:
+        return cached_payload
+
+    df = load_disclosure_reports(stock=stock, category=category)
+    if df is None or df.empty:
+        payload = {"stock": stock, "category": category, "title": "", "date": "", "pdfUrl": "", "textExcerpt": ""}
+        save_cached_payload(payload, cache_key, stock)
+        return payload
+
+    df = df.copy()
+    df["公告时间_dt"] = pd.to_datetime(df["公告时间"], errors="coerce")
+    df = df.sort_values("公告时间_dt", ascending=False)
+    latest_row = df.iloc[0]
+
+    # Rebuild raw payload to get adjunctUrl / PDF path.
+    with temporary_disable_proxy_env():
+        report_df = ak.stock_zh_a_disclosure_report_cninfo(
+            symbol=stock,
+            category=category,
+            start_date="20200101",
+            end_date="20300101",
+        )
+
+    # Call raw endpoint directly for PDF path because AKShare output hides adjunctUrl.
+    with temporary_disable_proxy_env():
+        import akshare as _ak
+        stock_json = _ak.stock_feature.stock_disclosure_cninfo.__get_stock_json("沪深京")
+        category_dict = _ak.stock_feature.stock_disclosure_cninfo.__get_category_dict()
+        payload = {
+            "pageNum": "1",
+            "pageSize": "30",
+            "column": "szse",
+            "tabName": "fulltext",
+            "plate": "",
+            "stock": f"{stock},{stock_json[stock]}",
+            "searchkey": "",
+            "secid": "",
+            "category": f"{category_dict[category]}",
+            "trade": "",
+            "seDate": "2020-01-01~2030-01-01",
+            "sortName": "",
+            "sortType": "",
+            "isHLtitle": "true",
+        }
+        raw_response = requests.post(
+            "http://www.cninfo.com.cn/new/hisAnnouncement/query",
+            data=payload,
+            timeout=60,
+            proxies={"http": None, "https": None},
+        )
+        raw_response.raise_for_status()
+        raw_json = raw_response.json()
+
+    selected_item = None
+    for item in raw_json.get("announcements", []):
+        announcement_title = item.get("announcementTitle", "")
+        if announcement_title == latest_row["公告标题"]:
+            selected_item = item
+            break
+
+    adjunct_url = selected_item.get("adjunctUrl", "") if selected_item else ""
+    pdf_url = f"http://static.cninfo.com.cn/{adjunct_url.lstrip('/')}" if adjunct_url else ""
+    text_excerpt = fetch_pdf_text_from_cninfo(adjunct_url) if adjunct_url else ""
+
+    payload = {
+        "stock": stock,
+        "category": category,
+        "title": latest_row["公告标题"],
+        "date": str(latest_row["公告时间"]),
+        "pdfUrl": pdf_url,
+        "textExcerpt": text_excerpt,
+    }
+    save_cached_payload(payload, cache_key, stock)
+    return payload
+
+
+def get_latest_report_text_payload_v2(stock: str, category: str, cache_key: str) -> dict:
+    cached_payload = load_cached_payload(cache_key, stock)
+    if cached_payload is not None:
+        return cached_payload
+
+    df = load_disclosure_reports(stock=stock, category=category)
+    if df is None or df.empty:
+        payload = {"stock": stock, "category": category, "title": "", "date": "", "pdfUrl": "", "textExcerpt": ""}
+        save_cached_payload(payload, cache_key, stock)
+        return payload
+
+    df = df.copy()
+    df["公告时间_dt"] = pd.to_datetime(df["公告时间"], errors="coerce")
+    df = df.sort_values("公告时间_dt", ascending=False)
+    latest_row = df.iloc[0]
+
+    with temporary_disable_proxy_env():
+        stock_json = disclosure_cninfo.__get_stock_json("沪深京")
+        category_dict = disclosure_cninfo.__get_category_dict()
+        query_payload = {
+            "pageNum": "1",
+            "pageSize": "30",
+            "column": "szse",
+            "tabName": "fulltext",
+            "plate": "",
+            "stock": f"{stock},{stock_json[stock]}",
+            "searchkey": "",
+            "secid": "",
+            "category": f"{category_dict[category]}",
+            "trade": "",
+            "seDate": "2020-01-01~2030-01-01",
+            "sortName": "",
+            "sortType": "",
+            "isHLtitle": "true",
+        }
+        raw_response = requests.post(
+            "http://www.cninfo.com.cn/new/hisAnnouncement/query",
+            data=query_payload,
+            timeout=60,
+            proxies={"http": None, "https": None},
+        )
+        raw_response.raise_for_status()
+        raw_json = raw_response.json()
+
+    selected_item = None
+    for item in raw_json.get("announcements", []):
+        if item.get("announcementTitle", "") == latest_row["公告标题"]:
+            selected_item = item
+            break
+
+    adjunct_url = selected_item.get("adjunctUrl", "") if selected_item else ""
+    pdf_url = f"http://static.cninfo.com.cn/{adjunct_url.lstrip('/')}" if adjunct_url else ""
+    text_excerpt = fetch_pdf_text_from_cninfo(adjunct_url) if adjunct_url else ""
+
+    payload = {
+        "stock": stock,
+        "category": category,
+        "title": latest_row["公告标题"],
+        "date": str(latest_row["公告时间"]),
+        "pdfUrl": pdf_url,
+        "textExcerpt": text_excerpt,
+    }
+    save_cached_payload(payload, cache_key, stock)
+    return payload
+
+
 def top_bar_items(items: list[dict], item_type: str, limit: int = 4) -> list[dict]:
     filtered_items = [item for item in items if item.get("type") == item_type]
     sorted_items = sorted(filtered_items, key=lambda item: item.get("value", 0), reverse=True)
@@ -673,12 +1029,20 @@ def build_ai_analysis_context(stock: str, period: str | None, years: int) -> dic
     revenue_payload = get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
     profit_payload = get_profit_market_cap_payload_with_cache(stock=stock, years=years)
     pe_payload = get_pe_trend_payload_with_cache(stock=stock, years=years)
+    profile_payload = get_company_profile_payload_with_cache(stock=stock)
+    main_business_payload = get_main_business_payload_with_cache(stock=stock)
+    annual_report_payload = get_latest_report_text_payload_v2(stock=stock, category="年报", cache_key="annual_report_v1")
+    semiannual_report_payload = get_latest_report_text_payload_v2(stock=stock, category="半年报", cache_key="semiannual_report_v1")
 
     return {
         "stock": stock,
         "period": period or "latest",
         "years": years,
         "unit": "亿元",
+        "companyProfile": profile_payload,
+        "mainBusinessComposition": main_business_payload.get("items", []),
+        "latestAnnualReport": annual_report_payload,
+        "latestSemiannualReport": semiannual_report_payload,
         "balance": {
             "reportDate": balance_payload.get("reportDate"),
             "conclusion": balance_payload.get("conclusion"),
@@ -705,24 +1069,52 @@ def build_ai_analysis_context(stock: str, period: str | None, years: int) -> dic
     }
 
 
-def generate_ai_analysis(stock: str, period: str | None, years: int) -> dict:
+def generate_ai_analysis(stock: str, period: str | None, years: int, company_material: str | None = None) -> dict:
     settings = get_openai_settings()
     context = build_ai_analysis_context(stock=stock, period=period, years=years)
+    business_type_result = generate_business_type_analysis(
+        stock=stock,
+        period=period,
+        years=years,
+        company_material=company_material,
+    )
+    business_type_analysis = business_type_result.get("analysis")
+
     client = OpenAI(
         api_key=settings["api_key"],
         base_url=settings["base_url"],
         http_client=httpx.Client(trust_env=False),
     )
 
-    user_prompt = (
+    prompt_sections = [
         "请基于下面的财报和估值数据，生成一段中文分析。\n"
         "输出格式：\n"
         "1. 第一段：总评，2到3句。\n"
         "2. 第二段：用“要点：”开头，列出3条核心观察，每条单独一行，以“- ”开头。\n"
         "3. 第三段：用“风险提示：”开头，写1到2句。\n"
-        "4. 不要使用 markdown 标题，不要输出 JSON。\n\n"
-        f"{json.dumps(context, ensure_ascii=False, indent=2)}"
-    )
+        "4. 不要使用 markdown 标题，不要输出 JSON。\n"
+        "5. 请在总评里显式说明该公司更接近哪一类商业模式，以及这个分类如何解释当前财务结构和增长特征。\n\n",
+        "【结构化财务趋势数据】\n",
+        json.dumps(context, ensure_ascii=False, indent=2),
+    ]
+
+    if company_material and company_material.strip():
+        prompt_sections.extend(
+            [
+                "\n\n【用户提供的公司资料】\n",
+                company_material.strip(),
+            ]
+        )
+
+    if business_type_analysis:
+        prompt_sections.extend(
+            [
+                "\n\n【商业模式分类结果】\n",
+                json.dumps(business_type_analysis, ensure_ascii=False, indent=2),
+            ]
+        )
+
+    user_prompt = "".join(prompt_sections)
 
     response = client.chat.completions.create(
         model=settings["model"],
@@ -744,6 +1136,82 @@ def generate_ai_analysis(stock: str, period: str | None, years: int) -> dict:
         "years": years,
         "model": settings["model"],
         "analysis": analysis_text,
+        "businessTypeAnalysis": business_type_analysis,
+        "dataContext": context,
+    }
+
+
+def generate_business_type_analysis(
+    stock: str,
+    period: str | None,
+    years: int,
+    company_material: str | None = None,
+) -> dict:
+    settings = get_openai_settings()
+    context = build_ai_analysis_context(stock=stock, period=period, years=years)
+    client = OpenAI(
+        api_key=settings["api_key"],
+        base_url=settings["base_url"],
+        http_client=httpx.Client(trust_env=False),
+    )
+
+    schema_template = {
+        "company_name": "",
+        "business_type": "",
+        "confidence": 0.0,
+        "main_revenue_source": "",
+        "main_profit_source": "",
+        "growth_driver": "",
+        "key_evidence": [
+            {"evidence_type": "收入结构", "description": ""},
+            {"evidence_type": "利润结构", "description": ""},
+            {"evidence_type": "资产结构", "description": ""},
+            {"evidence_type": "现金流特征", "description": ""},
+        ],
+        "why_this_type": "",
+        "not_other_types_reason": [{"type": "", "reason": ""}],
+        "risks": [],
+        "missing_data": [],
+        "final_summary": "",
+    }
+
+    user_prompt = (
+        "请基于以下两部分信息完成判断，并严格输出 JSON：\n"
+        "A. 用户提供的公司资料\n"
+        "B. 系统整理的结构化财务趋势数据\n\n"
+        "判断时一定要显式考虑收入来源、利润来源、增长驱动、成本结构、资产结构、现金流特征。"
+        "如果用户资料里缺少成本结构或现金流特征，请结合结构化数据判断；如果仍不足，请写入 missing_data，且必要时输出“无法确定”。\n\n"
+        f"JSON 模板：\n{json.dumps(schema_template, ensure_ascii=False, indent=2)}\n\n"
+        f"【公司资料】\n{(company_material or '无额外公司资料，仅使用结构化财务趋势数据判断。').strip()}\n\n"
+        f"【结构化财务趋势数据】\n{json.dumps(context, ensure_ascii=False, indent=2)}"
+    )
+
+    response = client.chat.completions.create(
+        model=settings["model"],
+        temperature=settings["temperature"],
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": BUSINESS_TYPE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+
+    content = response.choices[0].message.content if response.choices else ""
+    content = (content or "").strip()
+    if not content:
+        raise ValueError("OpenAI returned an empty business type analysis.")
+
+    try:
+        analysis_json = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"OpenAI did not return valid JSON: {content}") from exc
+
+    return {
+        "stock": stock,
+        "period": period or "latest",
+        "years": years,
+        "model": settings["model"],
+        "analysis": analysis_json,
         "dataContext": context,
     }
 
@@ -838,10 +1306,52 @@ def api_ai_analysis():
     stock = str(payload.get("stock", "600519")).strip() or "600519"
     period = payload.get("period")
     years_param = str(payload.get("years", "8")).strip() or "8"
+    company_material = str(payload.get("companyMaterial", "")).strip()
 
     try:
         years = normalize_years(years_param, default=8)
-        result = generate_ai_analysis(stock=stock, period=period, years=years)
+        result = generate_ai_analysis(
+            stock=stock,
+            period=period,
+            years=years,
+            company_material=company_material or None,
+        )
+        return jsonify(result)
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return (
+            jsonify(
+                {
+                    "error": str(exc),
+                    "stock": stock,
+                    "period": period,
+                    "years": years_param,
+                }
+            ),
+            400,
+        )
+
+
+@app.post("/api/business-type-analysis")
+def api_business_type_analysis():
+    payload = request.get_json(silent=True) or {}
+
+    stock = str(payload.get("stock", "600519")).strip() or "600519"
+    period = payload.get("period")
+    years_param = str(payload.get("years", "8")).strip() or "8"
+    company_material = str(payload.get("companyMaterial", "")).strip()
+
+    try:
+        if not company_material:
+            raise ValueError("companyMaterial is required.")
+
+        years = normalize_years(years_param, default=8)
+        result = generate_business_type_analysis(
+            stock=stock,
+            period=period,
+            years=years,
+            company_material=company_material,
+        )
         return jsonify(result)
     except Exception as exc:
         print(f"[ERROR] {exc}")
@@ -868,6 +1378,7 @@ def health_message():
             "profitTrendApi": "/api/profit-market-cap?stock=600519&years=8",
             "peApi": "/api/pe-trend?stock=600519&years=8",
             "aiAnalysisApi": "POST /api/ai-analysis",
+            "businessTypeAnalysisApi": "POST /api/business-type-analysis",
         }
     )
 

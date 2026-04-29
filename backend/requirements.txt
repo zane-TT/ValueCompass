@@ -4,3 +4,4 @@ akshare>=1.18
 openai>=1.76.0
 pandas>=2.0
 python-dotenv>=1.0
+pypdf>=5.0

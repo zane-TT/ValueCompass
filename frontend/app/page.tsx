@@ -64,6 +64,28 @@ type AiAnalysisResponse = {
   years: number;
   model: string;
   analysis: string;
+  businessTypeAnalysis?: BusinessTypeAnalysisPayload | null;
+};
+
+type BusinessTypeAnalysisPayload = {
+  company_name: string;
+  business_type: string;
+  confidence: number;
+  main_revenue_source: string;
+  main_profit_source: string;
+  growth_driver: string;
+  key_evidence: Array<{
+    evidence_type: string;
+    description: string;
+  }>;
+  why_this_type: string;
+  not_other_types_reason: Array<{
+    type: string;
+    reason: string;
+  }>;
+  risks: string[];
+  missing_data: string[];
+  final_summary: string;
 };
 
 type BalanceHelp = {
@@ -754,7 +776,7 @@ export default function HomePage() {
           <div className="ai-card-header">
             <div>
               <h3>OpenAI 财报综合分析</h3>
-              <div className="subtle">结合资产负债、营收、市值、净利润和市盈率做一段整体解读。</div>
+              <div className="subtle">结合资产负债、营收、市值、净利润和市盈率做整体解读，并自动判断商业模式类型。</div>
             </div>
 
             <button className="query-button" onClick={() => void loadAiAnalysis()}>
@@ -764,6 +786,17 @@ export default function HomePage() {
 
           <div className="status">{aiStatus}</div>
           {aiError ? <div className="error-box">{aiError}</div> : null}
+          {aiData?.businessTypeAnalysis ? (
+            <div className="business-type-summary">
+              <div className="business-type-chip">
+                商业模式：{aiData.businessTypeAnalysis.business_type}
+              </div>
+              <div className="subtle">
+                置信度：{aiData.businessTypeAnalysis.confidence} | 核心收入：
+                {aiData.businessTypeAnalysis.main_revenue_source || "未明确"}
+              </div>
+            </div>
+          ) : null}
           {aiData?.analysis ? <div className="ai-content">{aiData.analysis}</div> : null}
         </div>
       </section>
