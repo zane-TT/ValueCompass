@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import akshare as ak
+import httpx
 import pandas as pd
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from openai import OpenAI
+from dotenv import load_dotenv
 
 app = Flask(__name__)
 CORS(
@@ -21,6 +25,22 @@ CORS(
 YI = 100000000
 BASE_DIR = Path(__file__).resolve().parent
 CACHE_DIR = BASE_DIR / "cache"
+load_dotenv(BASE_DIR / ".env")
+DEFAULT_OPENAI_BASE_URL = "https://api.openai-proxy.org/v1"
+DEFAULT_OPENAI_MODEL = "gpt-5.4-nano-2026-03-17"
+DEFAULT_OPENAI_TEMPERATURE = 0.1
+
+AI_ANALYSIS_SYSTEM_PROMPT = """
+你是一名A股财报分析助手。
+
+请基于给定的结构化数据，用简洁、专业、偏业务解读的中文输出分析结论。
+要求：
+1. 不要编造不存在的数据。
+2. 先给一段总评，再给3条要点。
+3. 重点结合资产负债结构、营收与市值趋势、净利润与市值趋势、市盈率区间。
+4. 语言尽量让非财务背景的产品经理也能看懂。
+5. 不要写投资建议，不要承诺收益。
+""".strip()
 
 ASSET_MAPPING = {
     "现金": [["货币资金"], ["总现金"]],
@@ -555,6 +575,179 @@ def build_pe_trend_payload(stock: str, years: int) -> dict:
     }
 
 
+def normalize_openai_base_url(base_url: str | None) -> str:
+    text = (base_url or DEFAULT_OPENAI_BASE_URL).strip().rstrip("/")
+    if not text:
+        text = DEFAULT_OPENAI_BASE_URL
+    if not text.endswith("/v1"):
+        text = f"{text}/v1"
+    return text
+
+
+def get_openai_settings() -> dict:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("Missing OPENAI_API_KEY. Please configure it in your local environment before using /api/ai-analysis.")
+
+    model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+    base_url = normalize_openai_base_url(os.getenv("OPENAI_BASE_URL"))
+
+    temperature_text = os.getenv("OPENAI_TEMPERATURE", str(DEFAULT_OPENAI_TEMPERATURE)).strip()
+    try:
+        temperature = float(temperature_text)
+    except ValueError as exc:
+        raise ValueError("OPENAI_TEMPERATURE must be a number.") from exc
+
+    return {
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model,
+        "temperature": temperature,
+    }
+
+
+def get_balance_payload_with_cache(stock: str, period: str | None) -> dict:
+    normalized_period = normalize_period(period)
+    cached_payload = load_cached_payload("balance", stock, normalized_period or "latest")
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = get_balance_payload(stock=stock, period=period)
+    save_cached_payload(payload, "balance", stock, normalized_period or "latest")
+    return payload
+
+
+def get_revenue_market_cap_payload_with_cache(stock: str, years: int) -> dict:
+    cached_payload = load_cached_payload("revenue_market_cap_v2", stock, years)
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = get_revenue_market_cap_payload(stock=stock, years=years)
+    save_cached_payload(payload, "revenue_market_cap_v2", stock, years)
+    return payload
+
+
+def get_profit_market_cap_payload_with_cache(stock: str, years: int) -> dict:
+    cached_payload = load_cached_payload("profit_market_cap_v1", stock, years)
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = get_profit_market_cap_payload(stock=stock, years=years)
+    save_cached_payload(payload, "profit_market_cap_v1", stock, years)
+    return payload
+
+
+def get_pe_trend_payload_with_cache(stock: str, years: int) -> dict:
+    cached_payload = load_cached_payload("pe_trend_v1", stock, years)
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = build_pe_trend_payload(stock=stock, years=years)
+    save_cached_payload(payload, "pe_trend_v1", stock, years)
+    return payload
+
+
+def top_bar_items(items: list[dict], item_type: str, limit: int = 4) -> list[dict]:
+    filtered_items = [item for item in items if item.get("type") == item_type]
+    sorted_items = sorted(filtered_items, key=lambda item: item.get("value", 0), reverse=True)
+    return [{"name": item["name"], "value": item["value"]} for item in sorted_items[:limit]]
+
+
+def sample_series_points(items: list[dict], max_points: int = 6) -> list[dict]:
+    if len(items) <= max_points:
+        return items
+
+    sampled: list[dict] = []
+    step = max(1, len(items) // max_points)
+    for index in range(0, len(items), step):
+        sampled.append(items[index])
+        if len(sampled) >= max_points - 1:
+            break
+
+    sampled.append(items[-1])
+    return sampled
+
+
+def build_ai_analysis_context(stock: str, period: str | None, years: int) -> dict:
+    balance_payload = get_balance_payload_with_cache(stock=stock, period=period)
+    revenue_payload = get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
+    profit_payload = get_profit_market_cap_payload_with_cache(stock=stock, years=years)
+    pe_payload = get_pe_trend_payload_with_cache(stock=stock, years=years)
+
+    return {
+        "stock": stock,
+        "period": period or "latest",
+        "years": years,
+        "unit": "亿元",
+        "balance": {
+            "reportDate": balance_payload.get("reportDate"),
+            "conclusion": balance_payload.get("conclusion"),
+            "topAssets": top_bar_items(balance_payload.get("barData", []), "asset"),
+            "topLiabilities": top_bar_items(balance_payload.get("barData", []), "liability"),
+        },
+        "revenueMarketCap": {
+            "conclusion": revenue_payload.get("conclusion"),
+            "revenueBars": sample_series_points(revenue_payload.get("revenueBars", [])),
+            "marketCapLine": sample_series_points(revenue_payload.get("marketCapLine", [])),
+        },
+        "profitMarketCap": {
+            "conclusion": profit_payload.get("conclusion"),
+            "profitBars": sample_series_points(profit_payload.get("profitBars", [])),
+            "marketCapLine": sample_series_points(profit_payload.get("marketCapLine", [])),
+        },
+        "peTrend": {
+            "conclusion": pe_payload.get("conclusion"),
+            "meanLine": pe_payload.get("meanLine"),
+            "lowLine": pe_payload.get("lowLine"),
+            "highLine": pe_payload.get("highLine"),
+            "peLine": sample_series_points(pe_payload.get("peLine", [])),
+        },
+    }
+
+
+def generate_ai_analysis(stock: str, period: str | None, years: int) -> dict:
+    settings = get_openai_settings()
+    context = build_ai_analysis_context(stock=stock, period=period, years=years)
+    client = OpenAI(
+        api_key=settings["api_key"],
+        base_url=settings["base_url"],
+        http_client=httpx.Client(trust_env=False),
+    )
+
+    user_prompt = (
+        "请基于下面的财报和估值数据，生成一段中文分析。\n"
+        "输出格式：\n"
+        "1. 第一段：总评，2到3句。\n"
+        "2. 第二段：用“要点：”开头，列出3条核心观察，每条单独一行，以“- ”开头。\n"
+        "3. 第三段：用“风险提示：”开头，写1到2句。\n"
+        "4. 不要使用 markdown 标题，不要输出 JSON。\n\n"
+        f"{json.dumps(context, ensure_ascii=False, indent=2)}"
+    )
+
+    response = client.chat.completions.create(
+        model=settings["model"],
+        temperature=settings["temperature"],
+        messages=[
+            {"role": "system", "content": AI_ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+
+    analysis_text = response.choices[0].message.content if response.choices else ""
+    analysis_text = (analysis_text or "").strip()
+    if not analysis_text:
+        raise ValueError("OpenAI returned an empty analysis.")
+
+    return {
+        "stock": stock,
+        "period": period or "latest",
+        "years": years,
+        "model": settings["model"],
+        "analysis": analysis_text,
+        "dataContext": context,
+    }
+
+
 @app.get("/api/pe-trend")
 def api_pe_trend():
     stock = request.args.get("stock", "000333").strip() or "000333"
@@ -638,6 +831,33 @@ def api_profit_market_cap():
         return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
 
 
+@app.post("/api/ai-analysis")
+def api_ai_analysis():
+    payload = request.get_json(silent=True) or {}
+
+    stock = str(payload.get("stock", "600519")).strip() or "600519"
+    period = payload.get("period")
+    years_param = str(payload.get("years", "8")).strip() or "8"
+
+    try:
+        years = normalize_years(years_param, default=8)
+        result = generate_ai_analysis(stock=stock, period=period, years=years)
+        return jsonify(result)
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return (
+            jsonify(
+                {
+                    "error": str(exc),
+                    "stock": stock,
+                    "period": period,
+                    "years": years_param,
+                }
+            ),
+            400,
+        )
+
+
 @app.get("/")
 def health_message():
     return jsonify(
@@ -647,6 +867,7 @@ def health_message():
             "trendApi": "/api/revenue-market-cap?stock=000333&years=8",
             "profitTrendApi": "/api/profit-market-cap?stock=600519&years=8",
             "peApi": "/api/pe-trend?stock=600519&years=8",
+            "aiAnalysisApi": "POST /api/ai-analysis",
         }
     )
 

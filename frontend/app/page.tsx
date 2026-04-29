@@ -58,6 +58,14 @@ type ProfitMarketCapResponse = {
   conclusion: string;
 };
 
+type AiAnalysisResponse = {
+  stock: string;
+  period: string;
+  years: number;
+  model: string;
+  analysis: string;
+};
+
 type BalanceHelp = {
   meaning: string;
   example: string;
@@ -176,6 +184,40 @@ function formatBalanceTooltip(params: unknown) {
   `;
 }
 
+function formatBalanceTooltipWithRatio(params: unknown) {
+  const items = (Array.isArray(params) ? params : [params]) as Array<{
+    name?: string;
+    marker?: string;
+    data?: {
+      value?: number;
+      amount?: number;
+      ratioLabel?: string;
+      groupLabel?: string;
+      help?: BalanceHelp;
+    };
+  }>;
+
+  const item =
+    items.find((entry) => entry.data?.amount !== undefined || entry.data?.help) ?? items[0];
+
+  const name = item.name ?? "";
+  const amount = item.data?.amount ?? item.data?.value ?? "-";
+  const ratioLabel = item.data?.ratioLabel ?? "-";
+  const groupLabel = item.data?.groupLabel ?? "总额";
+  const help = item.data?.help;
+
+  return `
+    <div style="width: 360px; max-width: 360px; white-space: normal; word-break: break-word; overflow-wrap: break-word; line-height: 1.7; font-size: 13px; color: #172033;">
+      <div style="font-weight: 700; font-size: 15px; margin-bottom: 8px; color: #172033;">${name}</div>
+      <div style="margin-bottom: 8px;">${item.marker ?? ""}<b>金额：</b>${amount} 亿元</div>
+      <div style="margin-bottom: 8px;"><b>占${groupLabel}比：</b>${ratioLabel}</div>
+      <div style="margin-bottom: 8px;"><div style="font-weight: 700; margin-bottom: 2px;">是什么：</div><div>${help?.meaning ?? "暂无说明"}</div></div>
+      <div style="margin-bottom: 8px;"><div style="font-weight: 700; margin-bottom: 2px;">常见例子：</div><div>${help?.example ?? "暂无举例"}</div></div>
+      <div><div style="font-weight: 700; margin-bottom: 2px;">怎么看：</div><div>${help?.watch ?? "暂无分析提示"}</div></div>
+    </div>
+  `;
+}
+
 export default function HomePage() {
   const [stock, setStock] = useState("600519");
   const [period, setPeriod] = useState("");
@@ -186,15 +228,21 @@ export default function HomePage() {
   const [peStatus, setPeStatus] = useState("正在加载市盈率数据...");
   const [profitStatus, setProfitStatus] = useState("正在加载净利润与市值数据...");
 
+  const [aiStatus, setAiStatus] = useState("点击“生成 AI 分析”获取综合解读");
+
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [peError, setPeError] = useState<string | null>(null);
   const [profitError, setProfitError] = useState<string | null>(null);
 
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const [balanceData, setBalanceData] = useState<BalanceResponse | null>(null);
   const [trendData, setTrendData] = useState<TrendResponse | null>(null);
   const [peData, setPeData] = useState<PeTrendResponse | null>(null);
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
+
+  const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
 
   const balanceChartRef = useRef<HTMLDivElement | null>(null);
   const trendChartRef = useRef<HTMLDivElement | null>(null);
@@ -247,9 +295,25 @@ export default function HomePage() {
   useEffect(() => {
     if (!balanceData || !balanceChart.current) return;
 
-    const colors = balanceData.barData.map((item) =>
-      item.type === "asset" ? "#4e79ff" : "#e05555"
-    );
+    const totalAssets = balanceData.barData.reduce((sum, item) => {
+      return item.type === "asset" ? sum + item.value : sum;
+    }, 0);
+
+    const seriesData = balanceData.barData.map((item) => {
+      const ratio = totalAssets > 0 ? (item.value / totalAssets) * 100 : 0;
+
+      return {
+        name: item.name,
+        value: Number(ratio.toFixed(2)),
+        amount: item.value,
+        ratioLabel: `${ratio.toFixed(1)}%`,
+        help: BALANCE_TERM_HELP[`${item.type}:${item.name}`],
+        groupLabel: "总资产",
+        itemStyle: {
+          color: item.type === "asset" ? "#4e79ff" : "#e05555",
+        },
+      };
+    });
 
     balanceChart.current.clear();
     balanceChart.current.setOption(
@@ -258,7 +322,7 @@ export default function HomePage() {
         tooltip: {
           trigger: "axis",
           axisPointer: { type: "shadow" },
-          formatter: formatBalanceTooltip,
+          formatter: formatBalanceTooltipWithRatio,
           confine: true,
           extraCssText: `
             white-space: normal;
@@ -268,10 +332,15 @@ export default function HomePage() {
             box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
           `,
         },
-        grid: { top: 24, left: 60, right: 24, bottom: 24, containLabel: true },
+        grid: { top: 24, left: 76, right: 96, bottom: 24, containLabel: true },
         xAxis: {
           type: "value",
-          name: balanceData.unit,
+          name: "占比",
+          min: 0,
+          max: 100,
+          axisLabel: {
+            formatter: (value: number) => `${value}%`,
+          },
           splitLine: { lineStyle: { color: "#e8edf5" } },
         },
         yAxis: {
@@ -282,12 +351,32 @@ export default function HomePage() {
         series: [
           {
             type: "bar",
-            label: { show: true, position: "right", formatter: "{c}" },
-            data: balanceData.barData.map((item, index) => ({
-              value: item.value,
-              help: BALANCE_TERM_HELP[`${item.type}:${item.name}`],
-              itemStyle: { color: colors[index] },
-            })),
+            silent: true,
+            barGap: "-100%",
+            barWidth: 18,
+            itemStyle: {
+              color: "#eef3fb",
+              borderRadius: [0, 6, 6, 0],
+            },
+            data: balanceData.barData.map(() => 100),
+          },
+          {
+            type: "bar",
+            barWidth: 18,
+            itemStyle: {
+              borderRadius: [0, 6, 6, 0],
+            },
+            label: {
+              show: true,
+              position: "right",
+              color: "#334155",
+              formatter: (params: { data?: { amount?: number; ratioLabel?: string } }) => {
+                const amount = params.data?.amount ?? 0;
+                const ratioLabel = params.data?.ratioLabel ?? "0.0%";
+                return `${amount}亿  ${ratioLabel}`;
+              },
+            },
+            data: seriesData,
           },
         ],
       },
@@ -572,12 +661,45 @@ export default function HomePage() {
   }
 
   async function loadAllData() {
+    setAiData(null);
+    setAiError(null);
+    setAiStatus("点击“生成 AI 分析”获取综合解读");
+
     await Promise.all([
       loadBalanceData(),
       loadTrendData(),
       loadPeData(),
       loadProfitMarketCapData(),
     ]);
+  }
+
+  async function loadAiAnalysis() {
+    setAiStatus("正在生成 OpenAI 财报分析...");
+    setAiError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/ai-analysis`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          stock: stock || "600519",
+          period: period.trim() || null,
+          years: Number(years || "8"),
+        }),
+      });
+
+      const data = (await response.json()) as AiAnalysisResponse & { error?: string };
+      if (!response.ok) throw new Error(data.error || "AI 分析接口请求失败");
+
+      setAiData(data);
+      setAiStatus(`AI 分析已生成，模型：${data.model}`);
+    } catch (fetchError) {
+      const message = fetchError instanceof Error ? fetchError.message : "AI 分析生成失败";
+      setAiError(message);
+      setAiStatus(`AI 分析失败：${message}`);
+    }
   }
 
   const combinedStatus = [balanceStatus, trendStatus, peStatus, profitStatus].join(" | ");
@@ -625,6 +747,25 @@ export default function HomePage() {
 
         <div className="status">{combinedStatus}</div>
         {combinedError ? <div className="error-box">{combinedError}</div> : null}
+      </section>
+
+      <section className="panel">
+        <div className="chart-card ai-card">
+          <div className="ai-card-header">
+            <div>
+              <h3>OpenAI 财报综合分析</h3>
+              <div className="subtle">结合资产负债、营收、市值、净利润和市盈率做一段整体解读。</div>
+            </div>
+
+            <button className="query-button" onClick={() => void loadAiAnalysis()}>
+              生成 AI 分析
+            </button>
+          </div>
+
+          <div className="status">{aiStatus}</div>
+          {aiError ? <div className="error-box">{aiError}</div> : null}
+          {aiData?.analysis ? <div className="ai-content">{aiData.analysis}</div> : null}
+        </div>
       </section>
 
       <section className="panel">

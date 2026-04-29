@@ -1,198 +1,89 @@
-# 财报可视化分析系统
+# ValueCompass
 
-## 项目简介
+这是一个最小可运行的财报可视化 Demo：
 
-这是一个基于 Python + Next.js + ECharts 的财报可视化分析系统，用于展示 A 股上市公司的财务数据和趋势分析。
+- 前端：Next.js + ECharts
+- 后端：Flask + AKShare
+- AI 分析：OpenAI-compatible API（从后端发起调用）
 
-### 核心功能
+## 当前功能
 
-1. **资产负债结构图** - 展示公司资产和负债的结构分布
-2. **业绩和市值趋势对比图** - 分析公司营收、利润与市值的关系
-3. **市盈率趋势图** - 展示公司估值变化趋势
+1. 资产负债结构图
+2. 营收与市值趋势图
+3. 净利润与市值趋势图
+4. 市盈率趋势图
+5. OpenAI 财报综合分析
 
-## 技术栈
+## 目录
 
-### 后端
-- **Python 3.10+**
-- **Flask** - Web 框架
-- **AKShare** - 财经数据接口库
-- **Pandas** - 数据处理
+- [backend/app.py](D:/github/ValueCompass/backend/app.py)
+- [backend/requirements.txt](D:/github/ValueCompass/backend/requirements.txt)
+- [backend/.env.example](D:/github/ValueCompass/backend/.env.example)
+- [frontend/app/page.tsx](D:/github/ValueCompass/frontend/app/page.tsx)
+- [frontend/app/globals.css](D:/github/ValueCompass/frontend/app/globals.css)
 
-### 前端
-- **Next.js 14** - React 框架
-- **TypeScript** - 类型安全
-- **ECharts** - 数据可视化
-- **Tailwind CSS** - 样式框架
-
-## 项目结构
-
-```
-ValueCompass/
-├── backend/           # Flask 后端
-│   ├── app.py         # 主应用文件
-│   ├── requirements.txt  # 依赖文件
-│   └── cache/         # 数据缓存目录
-├── frontend/          # Next.js 前端
-│   ├── app/           # 页面和组件
-│   ├── components/    # 可复用组件
-│   └── package.json   # 前端依赖
-└── README.md          # 项目说明
-```
-
-## 安装依赖
-
-### 后端依赖
+## 后端启动
 
 ```bash
-cd backend
-pip install -r requirements.txt
+cd D:\github\ValueCompass\backend
+D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
+D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
 ```
 
-### 前端依赖
+后端默认地址：
+
+```text
+http://127.0.0.1:5001
+```
+
+## 前端启动
 
 ```bash
-cd frontend
+cd D:\github\ValueCompass\frontend
 npm install
-```
-
-## 启动服务
-
-### 启动后端服务
-
-```bash
-cd backend
-python app.py
-```
-
-**默认地址**：http://127.0.0.1:5001
-
-### 启动前端服务
-
-```bash
-cd frontend
 npm run dev
 ```
 
-**默认地址**：http://127.0.0.1:3000
-
-## API 接口
-
-### 1. 资产负债结构图
+前端默认地址：
 
 ```text
-GET /api/balance?stock=600519&period=20250630
+http://127.0.0.1:3000
 ```
 
-**参数**：
-- `stock`：股票代码（默认：600519）
-- `period`：报告期（可选，格式：20250630）
+## OpenAI 配置
 
-**响应**：
-- `stock`：股票代码
-- `title`：标题
-- `reportDate`：报告期
-- `unit`：单位
-- `treeData`：树状数据
-- `barData`：柱状图数据
-- `conclusion`：财务结论
+后端通过环境变量读取 OpenAI 配置。你可以参考：
 
-### 2. 业绩和市值趋势对比图
+- [backend/.env.example](D:/github/ValueCompass/backend/.env.example)
+
+需要的变量：
 
 ```text
-GET /api/revenue-market-cap?stock=000333&years=8
+OPENAI_BASE_URL=https://api.openai-proxy.org/v1
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-5.4-nano-2026-03-17
+OPENAI_TEMPERATURE=0.1
 ```
 
-**参数**：
-- `stock`：股票代码（默认：000333）
-- `years`：年份数量（默认：8）
+说明：
 
-**响应**：
-- 年度营收数据
-- 年度利润数据
-- 年度市值数据
-- 趋势图表数据
+- 我没有把真实 key 写进仓库
+- 你贴的 `max-context-chunks` 不是 OpenAI Python SDK 的原生参数，所以没有直接映射到后端配置
 
-### 3. 市盈率趋势图
+## AI 分析接口
 
 ```text
-GET /api/pe-trend?stock=600519&years=8
+POST /api/ai-analysis
 ```
 
-**参数**：
-- `stock`：股票代码（默认：600519）
-- `years`：年份数量（默认：8）
+请求体：
 
-**响应**：
-- 年度市盈率数据
-- 趋势图表数据
+```json
+{
+  "stock": "600519",
+  "period": null,
+  "years": 8
+}
+```
 
-## 数据处理
-
-### 资产负债表数据映射
-
-**资产部分**：
-- 现金 = 货币资金
-- 应收款 = 应收账款 + 应收票据 + 应收款项融资
-- 预付款 = 预付款项
-- 存货 = 存货
-- 其他流动 = 其他流动资产
-- 长期投资 = 长期股权投资 + 其他权益工具投资
-- 固定资产 = 固定资产
-- 无形&商誉 = 无形资产 + 商誉
-- 其他固定 = 其他非流动资产
-
-**负债部分**：
-- 短期借款 = 短期借款
-- 应付款 = 应付账款 + 应付票据
-- 预收款 = 预收款项 + 合同负债
-- 薪酬&税 = 应付职工薪酬 + 应交税费
-- 其他流动 = 其他流动负债
-- 长期借款 = 长期借款
-- 其他非流动 = 其他非流动负债
-
-### 数据单位
-- AKShare 返回的金额单位为元，系统自动转换为亿元，保留两位小数
-
-## 缓存机制
-
-系统采用文件缓存机制，缓存文件存储在 `backend/cache/` 目录：
-- 缓存文件名格式：`{data_type}__{stock}__{period}.json`
-- 缓存有效期：24小时
-- 缓存自动管理：当数据过期时会自动重新获取
-
-## 示例使用
-
-### 查看资产负债结构
-1. 访问前端页面：http://localhost:3000
-2. 在输入框中输入股票代码（如：600519）
-3. 点击「查询」按钮
-4. 查看资产负债结构图和财务结论
-
-### 查看业绩趋势
-1. 访问前端页面：http://localhost:3000
-2. 切换到「业绩趋势」标签
-3. 输入股票代码和年份数量
-4. 查看营收、利润和市值的趋势对比
-
-## 注意事项
-
-1. **数据来源**：使用 AKShare 获取东方财富的财务数据
-2. **字段映射**：如果 AKShare 字段名发生变化，后端会打印 `columns` 信息方便排查
-3. **缓存机制**：首次查询可能较慢，后续查询会使用缓存加速
-4. **错误处理**：系统会捕获并返回详细的错误信息
-
-## 扩展方向
-
-1. 添加更多财务指标分析
-2. 支持行业对比分析
-3. 实现数据导出功能
-4. 添加用户登录和数据保存功能
-5. 优化前端交互体验
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request 来改进这个项目！
-
-## 许可证
-
-MIT License
+如果没有配置 `OPENAI_API_KEY`，后端会返回清晰错误信息。

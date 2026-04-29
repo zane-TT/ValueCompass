@@ -1,57 +1,72 @@
-# Flask 后端说明
+# Backend
 
-这个目录只保留财报可视化所需的 Flask API。
+`backend/` 是当前项目的 Flask API。
 
-当前接口：
+已提供接口：
 
-1. `GET /api/balance`
-2. `GET /api/revenue-market-cap`
-3. `GET /api/pe-trend`
+- `GET /api/balance`
+- `GET /api/revenue-market-cap`
+- `GET /api/profit-market-cap`
+- `GET /api/pe-trend`
+- `POST /api/ai-analysis`
 
-## 安装依赖
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-## 启动命令
+## 安装
 
 ```bash
-cd backend
-python app.py
+cd D:\github\ValueCompass\backend
+D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-默认运行地址：
+## 启动
+
+```bash
+cd D:\github\ValueCompass\backend
+D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
+```
+
+默认地址：
 
 ```text
 http://127.0.0.1:5001
 ```
 
+## OpenAI 配置
+
+后端读取这些环境变量：
+
+- `OPENAI_BASE_URL`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `OPENAI_TEMPERATURE`
+
+示例见 [backend/.env.example](D:/github/ValueCompass/backend/.env.example)。
+
+推荐本地设置为：
+
+```text
+OPENAI_BASE_URL=https://api.openai-proxy.org/v1
+OPENAI_MODEL=gpt-5.4-nano-2026-03-17
+OPENAI_TEMPERATURE=0.1
+```
+
+不要把真实 `OPENAI_API_KEY` 提交进仓库。
+
 ## 接口示例
 
-### 资产负债结构图
-
 ```text
-http://127.0.0.1:5001/api/balance?stock=600519
+GET  http://127.0.0.1:5001/api/balance?stock=600519
+GET  http://127.0.0.1:5001/api/revenue-market-cap?stock=000333&years=8
+GET  http://127.0.0.1:5001/api/profit-market-cap?stock=600519&years=8
+GET  http://127.0.0.1:5001/api/pe-trend?stock=600519&years=8
+POST http://127.0.0.1:5001/api/ai-analysis
 ```
 
-### 业绩和市值趋势对比图
+`/api/ai-analysis` 请求体示例：
 
-```text
-http://127.0.0.1:5001/api/revenue-market-cap?stock=000333&years=8
+```json
+{
+  "stock": "600519",
+  "period": null,
+  "years": 8
+}
 ```
-
-### 市盈率趋势图
-
-```text
-http://127.0.0.1:5001/api/pe-trend?stock=600519&years=8
-```
-
-## 调试说明
-
-如果 AKShare 字段名变化，代码会打印：
-
-- `Balance columns`
-- `Profit columns`
-- `Valuation columns`
