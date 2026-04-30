@@ -84,6 +84,7 @@ type RevenueStructureResponse = {
   };
   businessSummary: {
     mainBusiness: string;
+    interpretedMainBusiness?: string;
     companyIntro: string;
     trendConclusion: string;
   };
@@ -908,11 +909,18 @@ export default function HomePage() {
                 </div>
                 <div className="summary-copy">
                   收入占比 {formatPercent(revenueStructureData.highlights.topProduct?.revenueRatio)}，
-                  毛利率 {formatPercent(revenueStructureData.highlights.bestGrossMarginProduct?.grossMargin)}
+                  自身毛利率 {formatPercent(revenueStructureData.breakdowns.byProduct[0]?.grossMargin)}
                 </div>
                 <div className="summary-copy">
-                  {revenueStructureData.businessSummary.mainBusiness || "暂无主营业务摘要"}
+                  {revenueStructureData.businessSummary.interpretedMainBusiness ||
+                    revenueStructureData.businessSummary.mainBusiness ||
+                    "暂无主营业务摘要"}
                 </div>
+                {revenueStructureData.businessSummary.mainBusiness ? (
+                  <div className="summary-copy">
+                    年报原文：{revenueStructureData.businessSummary.mainBusiness}
+                  </div>
+                ) : null}
                 {revenueStructureData.companyPositioning?.rationale ? (
                   <div className="summary-copy">
                     为什么按{primaryUnitLabel}看：{revenueStructureData.companyPositioning.rationale}

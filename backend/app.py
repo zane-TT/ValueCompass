@@ -998,6 +998,30 @@ def infer_company_positioning(
     }
 
 
+def build_interpreted_main_business_summary(
+    company_main_business: str,
+    company_positioning: dict,
+    product_items: list[dict],
+) -> str:
+    top_item_names = [str(item.get("itemName", "")).strip() for item in product_items[:2] if str(item.get("itemName", "")).strip()]
+    top_items_text = "、".join(top_item_names)
+    company_nature = company_positioning.get("companyNature", "mixed")
+
+    if company_nature == "service":
+        if top_items_text:
+            return f"可以把它理解成一家以{top_items_text}为核心的服务型公司。它主要不是卖实体产品，而是向客户出售运力、港口处理能力、租赁能力或物流组织能力。"
+        return "可以把它理解成一家服务型公司。它主要不是卖实体产品，而是向客户出售运输、交付、租赁或物流能力。"
+
+    if company_nature == "product":
+        if top_items_text:
+            return f"可以把它理解成一家以{top_items_text}为核心的产品型公司。它主要通过销售标准化商品或设备来赚钱，价格和销量通常是最关键的观察点。"
+        return "可以把它理解成一家产品型公司。它主要通过销售标准化商品、设备或消费品来赚钱。"
+
+    if top_items_text:
+        return f"可以把它理解成一家同时有产品和服务属性的公司，目前收入更值得先从{top_items_text}这些核心业务单元切进去看。"
+    return "可以把它理解成一家同时有产品和服务属性的公司，分析时更适合先看核心业务单元，再拆产品和服务。"
+
+
 def infer_business_explanation(
     item_name: str,
     company_main_business: str,
@@ -1267,6 +1291,11 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
         },
         "businessSummary": {
             "mainBusiness": profile_payload.get("mainBusiness", ""),
+            "interpretedMainBusiness": build_interpreted_main_business_summary(
+                company_main_business=company_main_business,
+                company_positioning=company_positioning,
+                product_items=product_items,
+            ),
             "companyIntro": profile_payload.get("companyIntro", ""),
             "trendConclusion": revenue_market_cap_payload.get("conclusion", ""),
         },
