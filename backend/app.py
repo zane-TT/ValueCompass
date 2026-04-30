@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import sys
 from contextlib import contextmanager
 from io import BytesIO
@@ -81,19 +83,40 @@ BUSINESS_TYPE_SYSTEM_PROMPT = """
 3. “成本制造型”更适用于毛利率不高，核心竞争力主要来自规模、成本控制、产能效率，而不是品牌溢价。
 4. 如果证据同时支持“品牌产品型”和“成本制造型”，要明确比较毛利率、利润集中度、品牌表述和资产结构后再判断，不能偷懒。
 
-可选公司类型：
-1. 品牌产品型
-2. 成本制造型
-3. 技术产品型
-4. 履约服务型
-5. 平台撮合型
-6. 订阅服务型
-7. 项目交付型
-8. 资产运营型
-9. 金融利差型
-10. 资源周期型
-11. 混合型
-12. 无法确定
+判断标准：
+
+品牌产品型：
+收入主要来自产品销售，毛利率高且稳定，核心竞争力来自品牌、渠道、定价权。
+
+成本制造型：
+收入主要来自产品销售，但毛利率不高，核心竞争力来自规模、成本控制、产能效率。
+
+技术产品型：
+收入来自技术产品、设备、软件或高技术制造，研发投入较高，技术壁垒重要。
+
+履约服务型：
+收入来自服务交付，比如物流、餐饮、酒店、配送、运维，利润受人工、履约成本影响较大。
+
+平台撮合型：
+收入来自佣金、广告、平台服务费、交易撮合，核心看 GMV、用户数、商家数、抽佣率。
+
+订阅服务型：
+收入来自会员费、SaaS 订阅、长期服务合同，核心看续费率、客户留存、ARPU。
+
+项目交付型：
+收入来自工程、地产、软件定制、大项目交付，核心看合同、完工进度、应收账款、现金流。
+
+资产运营型：
+收入来自固定资产或稀缺资产运营，比如高速、机场、港口、电力、水务、租赁，核心看资产收益率和现金流稳定性。
+
+金融利差型：
+收入来自利息收入、金融资产收益、资金成本差，核心看净息差、不良率、拨备、资本充足率。
+
+资源周期型：
+收入和利润受商品价格周期影响，比如煤炭、有色、石油、钢铁、化工周期品。
+
+混合型：
+如果公司有两个以上重要业务，且收入或利润占比都较大，请判断为混合型，并说明各业务占比
 """.strip()
 
 PROXY_ENV_KEYS = [
@@ -817,6 +840,275 @@ def get_main_business_payload_with_cache(stock: str) -> dict:
     return payload
 
 
+def is_supplementary_item(item_name: str) -> bool:
+    normalized_name = (item_name or "").strip()
+    return not normalized_name or "其他" in normalized_name or "补充" in normalized_name
+
+
+def filter_business_items(items: list[dict], category_type: str) -> list[dict]:
+    filtered_items = [
+        sanitize_business_item(item)
+        for item in items
+        if item.get("categoryType") == category_type and not is_supplementary_item(item.get("itemName", ""))
+    ]
+    return sorted(filtered_items, key=lambda item: item.get("revenue") or 0, reverse=True)
+
+
+def build_dominance_summary(items: list[dict]) -> dict | None:
+    if not items:
+        return None
+
+    leader = items[0]
+    ratio = float(leader.get("revenueRatio", 0) or 0)
+    return {
+        "itemName": leader.get("itemName", ""),
+        "revenue": leader.get("revenue", 0),
+        "revenueRatio": round(ratio, 4),
+        "isHighlyConcentrated": ratio >= 0.6,
+    }
+
+
+def build_margin_summary(items: list[dict]) -> dict | None:
+    if not items:
+        return None
+
+    finite_items = [item for item in items if item.get("grossMargin") is not None]
+    if not finite_items:
+        return None
+
+    sorted_items = sorted(finite_items, key=lambda item: item.get("grossMargin") or 0, reverse=True)
+    leader = sorted_items[0]
+    return {
+        "itemName": leader.get("itemName", ""),
+        "grossMargin": round(float(leader.get("grossMargin", 0) or 0), 4),
+        "revenue": leader.get("revenue", 0),
+        "revenueRatio": round(float(leader.get("revenueRatio", 0) or 0), 4),
+    }
+
+
+def parse_percentage_value(raw_value: str) -> float:
+    cleaned = (raw_value or "").replace(",", "").replace("%", "").strip()
+    if not cleaned:
+        return 0.0
+    return float(cleaned) / 100
+
+
+def sanitize_numeric(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric_value):
+        return None
+    return numeric_value
+
+
+def sanitize_business_item(item: dict) -> dict:
+    sanitized = dict(item)
+    numeric_fields = [
+        "revenue",
+        "revenueRatio",
+        "cost",
+        "costRatio",
+        "profit",
+        "profitRatio",
+        "grossMargin",
+        "revenueGrowth",
+        "costGrowth",
+    ]
+    for field in numeric_fields:
+        if field in sanitized:
+            sanitized[field] = sanitize_numeric(sanitized.get(field))
+    return sanitized
+
+
+def extract_sales_mode_breakdown(report_text: str) -> list[dict]:
+    if not report_text:
+        return []
+
+    start_markers = ["主营业务分销售模式情况", "主营业务分销售模式"]
+    end_markers = ["产销量情况分析表", "重大采购合同", "成本分析表", "主要销售客户及主要供应商情况"]
+    row_pattern = re.compile(
+        r"^(?P<name>[A-Za-z\u4e00-\u9fff（）()·\-]+)\s+"
+        r"(?P<revenue>-?[\d,]+(?:\.\d+)?)\s+"
+        r"(?P<cost>-?[\d,]+(?:\.\d+)?)\s+"
+        r"(?P<gross_margin>-?[\d,]+(?:\.\d+)?)\s+"
+        r"(?P<revenue_growth>-?[\d,]+(?:\.\d+)?)\s+"
+        r"(?P<cost_growth>-?[\d,]+(?:\.\d+)?)\s+"
+        r"(?P<margin_change>.+)$"
+    )
+
+    started = False
+    items: list[dict] = []
+    for raw_line in report_text.splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+
+        if not started and any(marker in line for marker in start_markers):
+            started = True
+            continue
+
+        if not started:
+            continue
+
+        if any(marker in line for marker in end_markers):
+            break
+
+        match = row_pattern.match(line)
+        if not match:
+            continue
+
+        item_name = match.group("name")
+        if is_supplementary_item(item_name):
+            continue
+
+        items.append(
+            sanitize_business_item(
+                {
+                    "itemName": item_name,
+                    "revenue": to_yi(parse_ak_value(match.group("revenue"))),
+                    "cost": to_yi(parse_ak_value(match.group("cost"))),
+                    "grossMargin": round(parse_percentage_value(match.group("gross_margin")), 4),
+                    "revenueGrowth": round(parse_percentage_value(match.group("revenue_growth")), 4),
+                    "costGrowth": round(parse_percentage_value(match.group("cost_growth")), 4),
+                    "grossMarginChangeText": match.group("margin_change").strip(),
+                }
+            )
+        )
+
+    total_revenue = sum((item.get("revenue") or 0) for item in items)
+    for item in items:
+        revenue = item.get("revenue") or 0
+        item["revenueRatio"] = round(revenue / total_revenue, 4) if total_revenue else 0.0
+
+    return sorted(items, key=lambda item: item.get("revenue") or 0, reverse=True)
+
+
+def find_bar_item(bar_data: list[dict], item_name: str) -> dict | None:
+    for item in bar_data:
+        if item.get("name") == item_name:
+            return item
+    return None
+
+
+def build_revenue_insight_points(
+    product_items: list[dict],
+    region_items: list[dict],
+    channel_items: list[dict],
+    contract_liability_item: dict | None,
+) -> list[str]:
+    insights: list[str] = []
+
+    product_dominance = build_dominance_summary(product_items)
+    if product_dominance:
+        ratio = product_dominance["revenueRatio"] * 100
+        if product_dominance["isHighlyConcentrated"]:
+            insights.append(f"收入高度集中在{product_dominance['itemName']}，收入占比约{ratio:.1f}%。")
+        else:
+            insights.append(f"当前第一大产品是{product_dominance['itemName']}，收入占比约{ratio:.1f}%。")
+
+    product_margin = build_margin_summary(product_items)
+    if product_margin:
+        insights.append(
+            f"{product_margin['itemName']}毛利率约{product_margin['grossMargin'] * 100:.1f}%，是最值得优先跟踪的盈利单元。"
+        )
+
+    region_dominance = build_dominance_summary(region_items)
+    if region_dominance:
+        ratio = region_dominance["revenueRatio"] * 100
+        insights.append(f"{region_dominance['itemName']}市场贡献收入约{ratio:.1f}%，区域结构较为清晰。")
+
+    if len(channel_items) >= 2:
+        direct_items = [item for item in channel_items if "直销" in item.get("itemName", "")]
+        wholesale_items = [
+            item
+            for item in channel_items
+            if "批发" in item.get("itemName", "") or "代理" in item.get("itemName", "")
+        ]
+        if direct_items and wholesale_items:
+            direct_item = direct_items[0]
+            wholesale_item = wholesale_items[0]
+            if direct_item["grossMargin"] > wholesale_item["grossMargin"]:
+                insights.append(
+                    f"直销毛利率高于批发代理，说明渠道利润回流对盈利质量有明显帮助。"
+                )
+            if direct_item["revenueGrowth"] > wholesale_item["revenueGrowth"]:
+                insights.append(
+                    f"直销增速快于批发代理，说明公司在主动强化自营或数字化渠道。"
+                )
+
+    if contract_liability_item and contract_liability_item.get("value", 0) > 0:
+        insights.append(
+            f"预收/合同负债约{contract_liability_item['value']}亿元，可作为客户预付款意愿的辅助观察指标。"
+        )
+
+    return insights
+
+
+def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
+    profile_payload = get_company_profile_payload_with_cache(stock=stock)
+    main_business_payload = get_main_business_payload_with_cache(stock=stock)
+    annual_report_payload = get_latest_report_text_payload_v2(stock=stock, category="年报", cache_key="annual_report_v1")
+    balance_payload = get_balance_payload_with_cache(stock=stock, period=None)
+    revenue_market_cap_payload = get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
+
+    items = main_business_payload.get("items", [])
+    product_items = filter_business_items(items, "按产品分类")
+    region_items = filter_business_items(items, "按地区分类")
+    industry_items = filter_business_items(items, "按行业分类")
+    channel_items = extract_sales_mode_breakdown(annual_report_payload.get("textExcerpt", ""))
+    contract_liability_item = find_bar_item(balance_payload.get("barData", []), "预收款")
+
+    insight_points = build_revenue_insight_points(
+        product_items=product_items,
+        region_items=region_items,
+        channel_items=channel_items,
+        contract_liability_item=contract_liability_item,
+    )
+
+    payload = {
+        "stock": stock,
+        "companyName": profile_payload.get("companyName", ""),
+        "industry": profile_payload.get("industry", ""),
+        "reportDate": annual_report_payload.get("date", ""),
+        "analysisDimensionCoverage": {
+            "product": bool(product_items),
+            "region": bool(region_items),
+            "channel": bool(channel_items),
+            "industry": bool(industry_items),
+            "contractLiability": contract_liability_item is not None,
+        },
+        "businessSummary": {
+            "mainBusiness": profile_payload.get("mainBusiness", ""),
+            "companyIntro": profile_payload.get("companyIntro", ""),
+            "trendConclusion": revenue_market_cap_payload.get("conclusion", ""),
+        },
+        "breakdowns": {
+            "byProduct": product_items,
+            "byRegion": region_items,
+            "byChannel": channel_items,
+            "byIndustry": industry_items,
+        },
+        "highlights": {
+            "topProduct": build_dominance_summary(product_items),
+            "topRegion": build_dominance_summary(region_items),
+            "topChannel": build_dominance_summary(channel_items),
+            "bestGrossMarginProduct": build_margin_summary(product_items),
+            "bestGrossMarginChannel": build_margin_summary(channel_items),
+            "contractLiability": contract_liability_item,
+        },
+        "insightPoints": insight_points,
+        "sourceDocuments": {
+            "annualReportTitle": annual_report_payload.get("title", ""),
+            "annualReportPdfUrl": annual_report_payload.get("pdfUrl", ""),
+        },
+    }
+    return payload
+
+
 def load_disclosure_reports(stock: str, category: str, start_date: str = "20200101", end_date: str = "20300101") -> pd.DataFrame:
     print(f"[INFO] Fetching disclosure reports, stock={stock}, category={category}")
     with temporary_disable_proxy_env():
@@ -1277,6 +1569,28 @@ def api_revenue_market_cap():
         return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
 
 
+@app.get("/api/revenue-structure")
+def api_revenue_structure():
+    stock = request.args.get("stock", "600519").strip() or "600519"
+    years_param = request.args.get("years", "8")
+    refresh = request.args.get("refresh") == "1"
+
+    try:
+        years = normalize_years(years_param, default=8)
+
+        if not refresh:
+            cached_payload = load_cached_payload("revenue_structure_v1", stock, years)
+            if cached_payload is not None:
+                return jsonify(cached_payload)
+
+        payload = get_revenue_structure_payload(stock=stock, years=years)
+        save_cached_payload(payload, "revenue_structure_v1", stock, years)
+        return jsonify(payload)
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+
+
 @app.get("/api/profit-market-cap")
 def api_profit_market_cap():
     stock = request.args.get("stock", "600519").strip() or "600519"
@@ -1375,6 +1689,7 @@ def health_message():
             "message": "Flask API is running. Use the Next frontend for the UI.",
             "balanceApi": "/api/balance?stock=600519",
             "trendApi": "/api/revenue-market-cap?stock=000333&years=8",
+            "revenueStructureApi": "/api/revenue-structure?stock=600519&years=8",
             "profitTrendApi": "/api/profit-market-cap?stock=600519&years=8",
             "peApi": "/api/pe-trend?stock=600519&years=8",
             "aiAnalysisApi": "POST /api/ai-analysis",

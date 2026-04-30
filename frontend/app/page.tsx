@@ -58,6 +58,50 @@ type ProfitMarketCapResponse = {
   conclusion: string;
 };
 
+type RevenueBreakdownItem = {
+  itemName: string;
+  revenue: number;
+  revenueRatio: number;
+  cost?: number;
+  grossMargin?: number;
+  revenueGrowth?: number;
+  grossMarginChangeText?: string;
+};
+
+type RevenueStructureResponse = {
+  stock: string;
+  companyName: string;
+  industry: string;
+  reportDate: string;
+  analysisDimensionCoverage: {
+    product: boolean;
+    region: boolean;
+    channel: boolean;
+    industry: boolean;
+    contractLiability: boolean;
+  };
+  businessSummary: {
+    mainBusiness: string;
+    companyIntro: string;
+    trendConclusion: string;
+  };
+  breakdowns: {
+    byProduct: RevenueBreakdownItem[];
+    byRegion: RevenueBreakdownItem[];
+    byChannel: RevenueBreakdownItem[];
+    byIndustry: RevenueBreakdownItem[];
+  };
+  highlights: {
+    topProduct?: RevenueBreakdownItem & { isHighlyConcentrated?: boolean };
+    topRegion?: RevenueBreakdownItem & { isHighlyConcentrated?: boolean };
+    topChannel?: RevenueBreakdownItem & { isHighlyConcentrated?: boolean };
+    bestGrossMarginProduct?: RevenueBreakdownItem;
+    bestGrossMarginChannel?: RevenueBreakdownItem;
+    contractLiability?: { name: string; value: number; type: "asset" | "liability" };
+  };
+  insightPoints: string[];
+};
+
 type AiAnalysisResponse = {
   stock: string;
   period: string;
@@ -240,6 +284,28 @@ function formatBalanceTooltipWithRatio(params: unknown) {
   `;
 }
 
+function formatPercent(value?: number) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function renderBreakdownRows(items: RevenueBreakdownItem[]) {
+  return items.slice(0, 4).map((item) => (
+    <div key={item.itemName} className="revenue-row">
+      <div>
+        <div className="revenue-row-title">{item.itemName}</div>
+        <div className="revenue-row-meta">
+          收入 {item.revenue} 亿 | 占比 {formatPercent(item.revenueRatio)}
+        </div>
+      </div>
+      <div className="revenue-row-side">
+        <div>毛利率 {formatPercent(item.grossMargin)}</div>
+        {item.revenueGrowth !== undefined ? <div>增速 {formatPercent(item.revenueGrowth)}</div> : null}
+      </div>
+    </div>
+  ));
+}
+
 export default function HomePage() {
   const [stock, setStock] = useState("600519");
   const [period, setPeriod] = useState("");
@@ -249,6 +315,7 @@ export default function HomePage() {
   const [trendStatus, setTrendStatus] = useState("正在加载业绩与市值数据...");
   const [peStatus, setPeStatus] = useState("正在加载市盈率数据...");
   const [profitStatus, setProfitStatus] = useState("正在加载净利润与市值数据...");
+  const [revenueStructureStatus, setRevenueStructureStatus] = useState("正在加载收入结构拆解...");
 
   const [aiStatus, setAiStatus] = useState("点击“生成 AI 分析”获取综合解读");
 
@@ -256,6 +323,7 @@ export default function HomePage() {
   const [trendError, setTrendError] = useState<string | null>(null);
   const [peError, setPeError] = useState<string | null>(null);
   const [profitError, setProfitError] = useState<string | null>(null);
+  const [revenueStructureError, setRevenueStructureError] = useState<string | null>(null);
 
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -263,6 +331,7 @@ export default function HomePage() {
   const [trendData, setTrendData] = useState<TrendResponse | null>(null);
   const [peData, setPeData] = useState<PeTrendResponse | null>(null);
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
+  const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
 
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
 
@@ -682,16 +751,38 @@ export default function HomePage() {
     }
   }
 
+  async function loadRevenueStructureData() {
+    setRevenueStructureStatus("正在加载公司收入结构拆解...");
+    setRevenueStructureError(null);
+    setRevenueStructureData(null);
+
+    try {
+      const params = new URLSearchParams({ stock: stock || "600519", years: years || "8" });
+      const response = await fetch(`${API_BASE}/api/revenue-structure?${params.toString()}`);
+      const data = (await response.json()) as RevenueStructureResponse & { error?: string };
+      if (!response.ok) throw new Error(data.error || "收入结构接口请求失败");
+
+      setRevenueStructureData(data);
+      setRevenueStructureStatus("加载完成");
+    } catch (fetchError) {
+      const message = fetchError instanceof Error ? fetchError.message : "加载失败";
+      setRevenueStructureError(message);
+      setRevenueStructureStatus(`加载失败：${message}`);
+    }
+  }
+
   async function loadAllData() {
     setAiData(null);
     setAiError(null);
     setAiStatus("点击“生成 AI 分析”获取综合解读");
+    setRevenueStructureData(null);
 
     await Promise.all([
       loadBalanceData(),
       loadTrendData(),
       loadPeData(),
       loadProfitMarketCapData(),
+      loadRevenueStructureData(),
     ]);
   }
 
@@ -724,8 +815,14 @@ export default function HomePage() {
     }
   }
 
-  const combinedStatus = [balanceStatus, trendStatus, peStatus, profitStatus].join(" | ");
-  const combinedError = [balanceError, trendError, peError, profitError]
+  const combinedStatus = [
+    balanceStatus,
+    trendStatus,
+    peStatus,
+    profitStatus,
+    revenueStructureStatus,
+  ].join(" | ");
+  const combinedError = [balanceError, trendError, peError, profitError, revenueStructureError]
     .filter(Boolean)
     .join(" | ");
 
@@ -769,6 +866,117 @@ export default function HomePage() {
 
         <div className="status">{combinedStatus}</div>
         {combinedError ? <div className="error-box">{combinedError}</div> : null}
+      </section>
+
+      <section className="panel">
+        <div className="chart-card revenue-structure-card">
+          <div className="ai-card-header">
+            <div>
+              <h3>公司靠什么赚钱</h3>
+              <div className="subtle">
+                把收入按产品、地区、渠道拆开看，先判断谁贡献收入、谁最赚钱、有没有单一业务依赖。
+              </div>
+            </div>
+            <div className="subtle">
+              {revenueStructureData?.companyName || stock}
+              {revenueStructureData?.reportDate ? ` · ${revenueStructureData.reportDate}` : ""}
+            </div>
+          </div>
+
+          {revenueStructureError ? <div className="error-box">{revenueStructureError}</div> : null}
+
+          {revenueStructureData ? (
+            <div className="revenue-structure-grid">
+              <div className="revenue-summary-card">
+                <div className="summary-kicker">核心判断</div>
+                <div className="summary-headline">
+                  {revenueStructureData.highlights.topProduct?.itemName || "未识别核心产品"}
+                </div>
+                <div className="summary-copy">
+                  收入占比 {formatPercent(revenueStructureData.highlights.topProduct?.revenueRatio)}，
+                  毛利率 {formatPercent(revenueStructureData.highlights.bestGrossMarginProduct?.grossMargin)}
+                </div>
+                <div className="summary-copy">
+                  {revenueStructureData.businessSummary.mainBusiness || "暂无主营业务摘要"}
+                </div>
+              </div>
+
+              <div className="revenue-metric-grid">
+                <div className="mini-metric-card">
+                  <div className="mini-metric-label">第一大产品</div>
+                  <div className="mini-metric-value">
+                    {revenueStructureData.highlights.topProduct?.itemName || "-"}
+                  </div>
+                  <div className="mini-metric-sub">
+                    {formatPercent(revenueStructureData.highlights.topProduct?.revenueRatio)}
+                  </div>
+                </div>
+
+                <div className="mini-metric-card">
+                  <div className="mini-metric-label">毛利最高产品</div>
+                  <div className="mini-metric-value">
+                    {revenueStructureData.highlights.bestGrossMarginProduct?.itemName || "-"}
+                  </div>
+                  <div className="mini-metric-sub">
+                    {formatPercent(revenueStructureData.highlights.bestGrossMarginProduct?.grossMargin)}
+                  </div>
+                </div>
+
+                <div className="mini-metric-card">
+                  <div className="mini-metric-label">第一大区域</div>
+                  <div className="mini-metric-value">
+                    {revenueStructureData.highlights.topRegion?.itemName || "-"}
+                  </div>
+                  <div className="mini-metric-sub">
+                    {formatPercent(revenueStructureData.highlights.topRegion?.revenueRatio)}
+                  </div>
+                </div>
+
+                <div className="mini-metric-card">
+                  <div className="mini-metric-label">预收/合同负债</div>
+                  <div className="mini-metric-value">
+                    {revenueStructureData.highlights.contractLiability?.value ?? "-"}
+                  </div>
+                  <div className="mini-metric-sub">亿元</div>
+                </div>
+              </div>
+
+              <div className="revenue-section-card">
+                <h4>按产品</h4>
+                {renderBreakdownRows(revenueStructureData.breakdowns.byProduct)}
+              </div>
+
+              <div className="revenue-section-card">
+                <h4>按地区</h4>
+                {renderBreakdownRows(revenueStructureData.breakdowns.byRegion)}
+              </div>
+
+              <div className="revenue-section-card revenue-section-card-wide">
+                <h4>按渠道</h4>
+                {revenueStructureData.breakdowns.byChannel.length ? (
+                  renderBreakdownRows(revenueStructureData.breakdowns.byChannel)
+                ) : (
+                  <div className="subtle">当前报告里没有抽取到稳定的渠道拆分数据。</div>
+                )}
+              </div>
+
+              <div className="revenue-section-card revenue-section-card-wide">
+                <h4>自动结论</h4>
+                <div className="insight-list">
+                  {revenueStructureData.insightPoints.length ? (
+                    revenueStructureData.insightPoints.map((item) => (
+                      <div key={item} className="insight-item">
+                        {item}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="subtle">当前样本不足，暂时没有生成自动结论。</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="panel">
