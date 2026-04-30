@@ -87,6 +87,11 @@ type RevenueStructureResponse = {
     companyIntro: string;
     trendConclusion: string;
   };
+  companyPositioning: {
+    companyNature: "service" | "product" | "mixed";
+    primaryUnitLabel: string;
+    rationale: string;
+  };
   breakdowns: {
     byProduct: RevenueBreakdownItem[];
     byRegion: RevenueBreakdownItem[];
@@ -340,6 +345,7 @@ export default function HomePage() {
   const [peData, setPeData] = useState<PeTrendResponse | null>(null);
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
+  const primaryUnitLabel = revenueStructureData?.companyPositioning?.primaryUnitLabel || "业务";
 
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
 
@@ -882,7 +888,7 @@ export default function HomePage() {
             <div>
               <h3>公司靠什么赚钱</h3>
               <div className="subtle">
-                把收入按产品、地区、渠道拆开看，先判断谁贡献收入、谁最赚钱、有没有单一业务依赖。
+                把收入按{primaryUnitLabel}、地区、渠道拆开看，先判断谁贡献收入、谁最赚钱、有没有单一业务依赖。
               </div>
             </div>
             <div className="subtle">
@@ -907,9 +913,14 @@ export default function HomePage() {
                 <div className="summary-copy">
                   {revenueStructureData.businessSummary.mainBusiness || "暂无主营业务摘要"}
                 </div>
+                {revenueStructureData.companyPositioning?.rationale ? (
+                  <div className="summary-copy">
+                    为什么按{primaryUnitLabel}看：{revenueStructureData.companyPositioning.rationale}
+                  </div>
+                ) : null}
                 {revenueStructureData.breakdowns.byProduct[0]?.businessDescription ? (
                   <div className="summary-copy">
-                    具体业务：{revenueStructureData.breakdowns.byProduct[0].businessDescription}
+                    这块具体做什么：{revenueStructureData.breakdowns.byProduct[0].businessDescription}
                   </div>
                 ) : null}
                 {revenueStructureData.breakdowns.byProduct[0]?.priceDrivers?.length ? (
@@ -921,7 +932,7 @@ export default function HomePage() {
 
               <div className="revenue-metric-grid">
                 <div className="mini-metric-card">
-                  <div className="mini-metric-label">第一大产品</div>
+                  <div className="mini-metric-label">第一大{primaryUnitLabel}</div>
                   <div className="mini-metric-value">
                     {revenueStructureData.highlights.topProduct?.itemName || "-"}
                   </div>
@@ -931,7 +942,7 @@ export default function HomePage() {
                 </div>
 
                 <div className="mini-metric-card">
-                  <div className="mini-metric-label">毛利最高产品</div>
+                  <div className="mini-metric-label">毛利最高{primaryUnitLabel}</div>
                   <div className="mini-metric-value">
                     {revenueStructureData.highlights.bestGrossMarginProduct?.itemName || "-"}
                   </div>
@@ -960,7 +971,7 @@ export default function HomePage() {
               </div>
 
               <div className="revenue-section-card">
-                <h4>按产品</h4>
+                <h4>按{primaryUnitLabel}</h4>
                 {renderBreakdownRows(revenueStructureData.breakdowns.byProduct)}
               </div>
 

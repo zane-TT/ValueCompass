@@ -131,28 +131,33 @@ PROXY_ENV_KEYS = [
 BUSINESS_EXPLANATION_RULES = [
     {
         "keywords": ["集装箱航运", "航运业务", "班轮"],
-        "businessDescription": "核心是为客户提供集装箱海运运输服务，收入通常来自不同航线的运价、舱位利用率和附加费。",
+        "businessDescription": "这块本质上是海运服务，不是制造产品。公司把客户的货物装进集装箱，在全球航线之间完成运输，收入主要来自运价、舱位利用率和各类附加费。",
         "priceDrivers": ["全球贸易需求", "航线运价", "船舶运力供给", "港口拥堵", "燃油成本", "汇率"],
+        "businessCategory": "service",
     },
     {
         "keywords": ["码头业务", "港口", "码头"],
-        "businessDescription": "核心是港口装卸、堆存和中转服务，收入通常和吞吐量、航线网络覆盖以及港口费率相关。",
+        "businessDescription": "这块也是服务。公司依托港口和码头资源，向船公司和货主提供装卸、堆存和中转服务，收入通常和吞吐量、港口费率、枢纽地位相关。",
         "priceDrivers": ["港口吞吐量", "区域贸易活跃度", "收费标准", "枢纽港地位", "人工与能耗成本"],
+        "businessCategory": "service",
     },
     {
         "keywords": ["茅台酒", "白酒", "系列酒"],
         "businessDescription": "核心是酒类产品销售，收入通常来自出厂价、渠道结构、销量和高端产品占比。",
         "priceDrivers": ["终端需求", "品牌力", "渠道结构", "出厂价调整", "产品结构升级", "政策环境"],
+        "businessCategory": "product",
     },
     {
         "keywords": ["家用空调", "消费电器", "冰箱", "洗衣机", "厨电"],
         "businessDescription": "核心是耐用消费品销售，收入通常来自销量、ASP、渠道折扣和新品迭代。",
         "priceDrivers": ["终端消费需求", "原材料价格", "渠道去库存", "以旧换新政策", "产品升级"],
+        "businessCategory": "product",
     },
     {
         "keywords": ["软件", "SaaS", "云服务"],
-        "businessDescription": "核心是软件许可或持续订阅服务，收入通常来自客户数、续费率和客单价。",
+        "businessDescription": "这块更接近持续服务。公司通过软件许可、订阅或云服务持续向客户交付能力，收入通常来自客户数、续费率和客单价。",
         "priceDrivers": ["客户扩张", "续费率", "ARPU", "产品迭代能力", "行业数字化投入"],
+        "businessCategory": "service",
     },
 ]
 
@@ -870,7 +875,13 @@ def get_main_business_payload_with_cache(stock: str) -> dict:
 
 def is_supplementary_item(item_name: str) -> bool:
     normalized_name = (item_name or "").strip()
-    return not normalized_name or "其他" in normalized_name or "补充" in normalized_name
+    return (
+        not normalized_name
+        or "其他" in normalized_name
+        or "补充" in normalized_name
+        or "抵销" in normalized_name
+        or "相互抵销" in normalized_name
+    )
 
 
 def filter_business_items(items: list[dict], category_type: str) -> list[dict]:
@@ -952,22 +963,93 @@ def sanitize_business_item(item: dict) -> dict:
     return sanitized
 
 
+def infer_company_positioning(
+    company_main_business: str,
+    industry: str,
+    product_items: list[dict],
+) -> dict:
+    item_names = " ".join(str(item.get("itemName", "")) for item in product_items)
+    search_text = " ".join([item_names, company_main_business or "", industry or ""])
+
+    service_keywords = ["服务", "航运", "物流", "运输", "租赁", "码头", "港口", "订阅", "云"]
+    product_keywords = ["产品", "白酒", "空调", "电器", "设备", "药", "芯片", "汽车", "酒"]
+
+    service_score = sum(1 for keyword in service_keywords if keyword in search_text)
+    product_score = sum(1 for keyword in product_keywords if keyword in search_text)
+
+    if service_score >= product_score + 1:
+        return {
+            "companyNature": "service",
+            "primaryUnitLabel": "业务",
+            "rationale": "这家公司主要卖的是运输、物流、码头或租赁等服务能力，所以这里的“按产品”更适合理解成“按业务单元”或“按服务线”看。",
+        }
+
+    if product_score >= service_score + 1:
+        return {
+            "companyNature": "product",
+            "primaryUnitLabel": "产品",
+            "rationale": "这家公司主要靠标准化商品或制造品赚钱，所以拆收入时直接按产品线看最合适。",
+        }
+
+    return {
+        "companyNature": "mixed",
+        "primaryUnitLabel": "业务",
+        "rationale": "公司同时有产品和服务属性，页面里把收入项统一当成“业务单元”来看，会比简单叫产品更准确。",
+    }
+
+
 def infer_business_explanation(
     item_name: str,
     company_main_business: str,
     industry: str,
+    dimension: str,
+    company_positioning: dict,
 ) -> dict:
-    search_text = " ".join([item_name or "", company_main_business or "", industry or ""])
+    if dimension == "region":
+        return {
+            "businessDescription": "这不是单独的一项产品或服务，而是公司在这个地区拿到的收入。看地区拆分，主要是为了判断公司依赖哪些市场，以及海外和国内的需求差异。",
+            "priceDrivers": ["区域需求景气度", "当地运价或报价水平", "汇率", "贸易政策", "竞争格局"],
+        }
+
+    if dimension == "channel":
+        return {
+            "businessDescription": "这不是产品分类，而是收入通过什么销售或交付渠道实现。看渠道拆分，主要是为了判断利润有没有回流到公司自己手里。",
+            "priceDrivers": ["直销占比", "经销体系议价能力", "客户结构", "渠道费用", "回款效率"],
+        }
+
+    if dimension == "industry":
+        return {
+            "businessDescription": "这反映的是公司把收入分配到哪些行业或应用场景，不是单独的一款产品。看这块主要是为了判断公司最终服务的是哪些下游需求。",
+            "priceDrivers": ["下游行业景气度", "客户资本开支", "行业需求波动", "竞争格局", "定价能力"],
+        }
+
+    search_sources = [item_name or "", company_main_business or "", industry or ""]
+    item_text = search_sources[0]
+    fallback_text = " ".join(search_sources[1:])
     for rule in BUSINESS_EXPLANATION_RULES:
-        if any(keyword in search_text for keyword in rule["keywords"]):
+        if any(keyword in item_text for keyword in rule["keywords"]):
             return {
                 "businessDescription": rule["businessDescription"],
                 "priceDrivers": rule["priceDrivers"],
             }
 
+    for rule in BUSINESS_EXPLANATION_RULES:
+        if any(keyword in fallback_text for keyword in rule["keywords"]):
+            label = company_positioning.get("primaryUnitLabel", "业务")
+            business_category = rule.get("businessCategory", "service")
+            if business_category == "product":
+                description = f"这块可以理解成公司的一个{label}单元，核心还是围绕具体商品销售展开。建议继续结合客户结构、渠道结构和成本结构一起看。"
+            else:
+                description = f"这块更适合理解成公司的一个{label}单元，核心卖的是运输、交付、订阅或其他服务能力，而不是狭义上的实体产品。"
+            return {
+                "businessDescription": description,
+                "priceDrivers": rule["priceDrivers"],
+            }
+
+    label = company_positioning.get("primaryUnitLabel", "业务")
     return {
-        "businessDescription": "这是公司主营业务中的一个收入单元，建议结合年报里的业务模式、客户结构和成本结构一起看。",
-        "priceDrivers": ["行业供需", "产品或服务定价", "销量", "成本变化", "竞争格局"],
+        "businessDescription": f"这是公司主营收入里的一个{label}单元。判断它重要不重要，建议一起看客户是谁、怎么收费、成本怎么变。",
+        "priceDrivers": ["行业供需", "产品或服务定价", "销量或利用率", "成本变化", "竞争格局"],
     }
 
 
@@ -975,6 +1057,8 @@ def enrich_business_items(
     items: list[dict],
     company_main_business: str,
     industry: str,
+    dimension: str,
+    company_positioning: dict,
 ) -> list[dict]:
     enriched_items: list[dict] = []
     for item in items:
@@ -984,6 +1068,8 @@ def enrich_business_items(
                 item_name=str(item.get("itemName", "")),
                 company_main_business=company_main_business,
                 industry=industry,
+                dimension=dimension,
+                company_positioning=company_positioning,
             )
         )
         enriched_items.append(enriched_item)
@@ -1124,26 +1210,39 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
     items = main_business_payload.get("items", [])
     company_main_business = str(profile_payload.get("mainBusiness", ""))
     industry = str(profile_payload.get("industry", ""))
+    company_positioning = infer_company_positioning(
+        company_main_business=company_main_business,
+        industry=industry,
+        product_items=filter_business_items(items, "按产品分类"),
+    )
 
     product_items = enrich_business_items(
         filter_business_items(items, "按产品分类"),
         company_main_business=company_main_business,
         industry=industry,
+        dimension="product",
+        company_positioning=company_positioning,
     )
     region_items = enrich_business_items(
         filter_business_items(items, "按地区分类"),
         company_main_business=company_main_business,
         industry=industry,
+        dimension="region",
+        company_positioning=company_positioning,
     )
     industry_items = enrich_business_items(
         filter_business_items(items, "按行业分类"),
         company_main_business=company_main_business,
         industry=industry,
+        dimension="industry",
+        company_positioning=company_positioning,
     )
     channel_items = enrich_business_items(
         extract_sales_mode_breakdown(annual_report_payload.get("textExcerpt", "")),
         company_main_business=company_main_business,
         industry=industry,
+        dimension="channel",
+        company_positioning=company_positioning,
     )
     contract_liability_item = find_bar_item(balance_payload.get("barData", []), "预收款")
 
@@ -1171,6 +1270,7 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
             "companyIntro": profile_payload.get("companyIntro", ""),
             "trendConclusion": revenue_market_cap_payload.get("conclusion", ""),
         },
+        "companyPositioning": company_positioning,
         "breakdowns": {
             "byProduct": product_items,
             "byRegion": region_items,
