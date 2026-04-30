@@ -66,6 +66,8 @@ type RevenueBreakdownItem = {
   grossMargin?: number;
   revenueGrowth?: number;
   grossMarginChangeText?: string;
+  businessDescription?: string;
+  priceDrivers?: string[];
 };
 
 type RevenueStructureResponse = {
@@ -297,6 +299,12 @@ function renderBreakdownRows(items: RevenueBreakdownItem[]) {
         <div className="revenue-row-meta">
           收入 {item.revenue} 亿 | 占比 {formatPercent(item.revenueRatio)}
         </div>
+        {item.businessDescription ? (
+          <div className="revenue-row-description">{item.businessDescription}</div>
+        ) : null}
+        {item.priceDrivers?.length ? (
+          <div className="revenue-row-drivers">价格影响因素：{item.priceDrivers.join("、")}</div>
+        ) : null}
       </div>
       <div className="revenue-row-side">
         <div>毛利率 {formatPercent(item.grossMargin)}</div>
@@ -899,6 +907,16 @@ export default function HomePage() {
                 <div className="summary-copy">
                   {revenueStructureData.businessSummary.mainBusiness || "暂无主营业务摘要"}
                 </div>
+                {revenueStructureData.breakdowns.byProduct[0]?.businessDescription ? (
+                  <div className="summary-copy">
+                    具体业务：{revenueStructureData.breakdowns.byProduct[0].businessDescription}
+                  </div>
+                ) : null}
+                {revenueStructureData.breakdowns.byProduct[0]?.priceDrivers?.length ? (
+                  <div className="summary-copy">
+                    价格影响：{revenueStructureData.breakdowns.byProduct[0].priceDrivers?.join("、")}
+                  </div>
+                ) : null}
               </div>
 
               <div className="revenue-metric-grid">

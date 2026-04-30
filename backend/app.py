@@ -128,6 +128,34 @@ PROXY_ENV_KEYS = [
     "all_proxy",
 ]
 
+BUSINESS_EXPLANATION_RULES = [
+    {
+        "keywords": ["集装箱航运", "航运业务", "班轮"],
+        "businessDescription": "核心是为客户提供集装箱海运运输服务，收入通常来自不同航线的运价、舱位利用率和附加费。",
+        "priceDrivers": ["全球贸易需求", "航线运价", "船舶运力供给", "港口拥堵", "燃油成本", "汇率"],
+    },
+    {
+        "keywords": ["码头业务", "港口", "码头"],
+        "businessDescription": "核心是港口装卸、堆存和中转服务，收入通常和吞吐量、航线网络覆盖以及港口费率相关。",
+        "priceDrivers": ["港口吞吐量", "区域贸易活跃度", "收费标准", "枢纽港地位", "人工与能耗成本"],
+    },
+    {
+        "keywords": ["茅台酒", "白酒", "系列酒"],
+        "businessDescription": "核心是酒类产品销售，收入通常来自出厂价、渠道结构、销量和高端产品占比。",
+        "priceDrivers": ["终端需求", "品牌力", "渠道结构", "出厂价调整", "产品结构升级", "政策环境"],
+    },
+    {
+        "keywords": ["家用空调", "消费电器", "冰箱", "洗衣机", "厨电"],
+        "businessDescription": "核心是耐用消费品销售，收入通常来自销量、ASP、渠道折扣和新品迭代。",
+        "priceDrivers": ["终端消费需求", "原材料价格", "渠道去库存", "以旧换新政策", "产品升级"],
+    },
+    {
+        "keywords": ["软件", "SaaS", "云服务"],
+        "businessDescription": "核心是软件许可或持续订阅服务，收入通常来自客户数、续费率和客单价。",
+        "priceDrivers": ["客户扩张", "续费率", "ARPU", "产品迭代能力", "行业数字化投入"],
+    },
+]
+
 ASSET_MAPPING = {
     "现金": [["货币资金"], ["总现金"]],
     "应收款": [
@@ -924,6 +952,44 @@ def sanitize_business_item(item: dict) -> dict:
     return sanitized
 
 
+def infer_business_explanation(
+    item_name: str,
+    company_main_business: str,
+    industry: str,
+) -> dict:
+    search_text = " ".join([item_name or "", company_main_business or "", industry or ""])
+    for rule in BUSINESS_EXPLANATION_RULES:
+        if any(keyword in search_text for keyword in rule["keywords"]):
+            return {
+                "businessDescription": rule["businessDescription"],
+                "priceDrivers": rule["priceDrivers"],
+            }
+
+    return {
+        "businessDescription": "这是公司主营业务中的一个收入单元，建议结合年报里的业务模式、客户结构和成本结构一起看。",
+        "priceDrivers": ["行业供需", "产品或服务定价", "销量", "成本变化", "竞争格局"],
+    }
+
+
+def enrich_business_items(
+    items: list[dict],
+    company_main_business: str,
+    industry: str,
+) -> list[dict]:
+    enriched_items: list[dict] = []
+    for item in items:
+        enriched_item = dict(item)
+        enriched_item.update(
+            infer_business_explanation(
+                item_name=str(item.get("itemName", "")),
+                company_main_business=company_main_business,
+                industry=industry,
+            )
+        )
+        enriched_items.append(enriched_item)
+    return enriched_items
+
+
 def extract_sales_mode_breakdown(report_text: str) -> list[dict]:
     if not report_text:
         return []
@@ -1056,10 +1122,29 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
     revenue_market_cap_payload = get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
 
     items = main_business_payload.get("items", [])
-    product_items = filter_business_items(items, "按产品分类")
-    region_items = filter_business_items(items, "按地区分类")
-    industry_items = filter_business_items(items, "按行业分类")
-    channel_items = extract_sales_mode_breakdown(annual_report_payload.get("textExcerpt", ""))
+    company_main_business = str(profile_payload.get("mainBusiness", ""))
+    industry = str(profile_payload.get("industry", ""))
+
+    product_items = enrich_business_items(
+        filter_business_items(items, "按产品分类"),
+        company_main_business=company_main_business,
+        industry=industry,
+    )
+    region_items = enrich_business_items(
+        filter_business_items(items, "按地区分类"),
+        company_main_business=company_main_business,
+        industry=industry,
+    )
+    industry_items = enrich_business_items(
+        filter_business_items(items, "按行业分类"),
+        company_main_business=company_main_business,
+        industry=industry,
+    )
+    channel_items = enrich_business_items(
+        extract_sales_mode_breakdown(annual_report_payload.get("textExcerpt", "")),
+        company_main_business=company_main_business,
+        industry=industry,
+    )
     contract_liability_item = find_bar_item(balance_payload.get("barData", []), "预收款")
 
     insight_points = build_revenue_insight_points(

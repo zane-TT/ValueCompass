@@ -348,6 +348,19 @@ input {
   line-height: 1.7;
 }
 
+.revenue-row-description {
+  margin-top: 8px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.revenue-row-drivers {
+  margin-top: 6px;
+  line-height: 1.7;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .revenue-row-side {
   text-align: right;
   flex-shrink: 0;
