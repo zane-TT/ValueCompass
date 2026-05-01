@@ -70,6 +70,12 @@ type RevenueBreakdownItem = {
   priceDrivers?: string[];
 };
 
+type PositioningEvidenceItem = {
+  type: string;
+  label: string;
+  detail: string;
+};
+
 type RevenueStructureResponse = {
   stock: string;
   companyName: string;
@@ -89,9 +95,15 @@ type RevenueStructureResponse = {
     trendConclusion: string;
   };
   companyPositioning: {
-    companyNature: "service" | "product" | "mixed";
+    companyNature: "service" | "product" | "platform";
+    confidence?: number;
     primaryUnitLabel: string;
     rationale: string;
+    evidence?: {
+      supports: PositioningEvidenceItem[];
+      conflicts: PositioningEvidenceItem[];
+    };
+    watchMetrics?: string[];
   };
   breakdowns: {
     byProduct: RevenueBreakdownItem[];
@@ -297,6 +309,17 @@ function formatPercent(value?: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function getCompanyNatureLabel(companyNature?: RevenueStructureResponse["companyPositioning"]["companyNature"]) {
+  if (companyNature === "product") return "产品型";
+  if (companyNature === "platform") return "平台型";
+  return "服务型";
+}
+
+function formatConfidence(value?: number) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return `${Math.round(value * 100)}%`;
+}
+
 function renderBreakdownRows(items: RevenueBreakdownItem[]) {
   return items.slice(0, 4).map((item) => (
     <div key={item.itemName} className="revenue-row">
@@ -347,6 +370,10 @@ export default function HomePage() {
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
   const primaryUnitLabel = revenueStructureData?.companyPositioning?.primaryUnitLabel || "业务";
+  const companyNatureLabel = getCompanyNatureLabel(revenueStructureData?.companyPositioning?.companyNature);
+  const supportEvidence = revenueStructureData?.companyPositioning?.evidence?.supports ?? [];
+  const conflictEvidence = revenueStructureData?.companyPositioning?.evidence?.conflicts ?? [];
+  const watchMetrics = revenueStructureData?.companyPositioning?.watchMetrics ?? [];
 
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
 
@@ -926,6 +953,15 @@ export default function HomePage() {
                     为什么按{primaryUnitLabel}看：{revenueStructureData.companyPositioning.rationale}
                   </div>
                 ) : null}
+                <div className="summary-copy">
+                  类型判断：{companyNatureLabel}
+                  {revenueStructureData.companyPositioning?.confidence !== undefined
+                    ? ` · 置信度 ${formatConfidence(revenueStructureData.companyPositioning.confidence)}`
+                    : ""}
+                </div>
+                {watchMetrics.length ? (
+                  <div className="summary-copy">重点跟踪：{watchMetrics.join("、")}</div>
+                ) : null}
                 {revenueStructureData.breakdowns.byProduct[0]?.businessDescription ? (
                   <div className="summary-copy">
                     这块具体做什么：{revenueStructureData.breakdowns.byProduct[0].businessDescription}
@@ -939,6 +975,14 @@ export default function HomePage() {
               </div>
 
               <div className="revenue-metric-grid">
+                <div className="mini-metric-card">
+                  <div className="mini-metric-label">公司类型</div>
+                  <div className="mini-metric-value">{companyNatureLabel}</div>
+                  <div className="mini-metric-sub">
+                    置信度 {formatConfidence(revenueStructureData.companyPositioning?.confidence)}
+                  </div>
+                </div>
+
                 <div className="mini-metric-card">
                   <div className="mini-metric-label">第一大{primaryUnitLabel}</div>
                   <div className="mini-metric-value">
@@ -975,6 +1019,39 @@ export default function HomePage() {
                     {revenueStructureData.highlights.contractLiability?.value ?? "-"}
                   </div>
                   <div className="mini-metric-sub">亿元</div>
+                </div>
+              </div>
+
+              <div className="revenue-section-card revenue-section-card-wide">
+                <h4>为什么这样判断</h4>
+                <div className="positioning-grid">
+                  <div className="positioning-column">
+                    <div className="positioning-title">支持证据</div>
+                    {supportEvidence.length ? (
+                      supportEvidence.map((item) => (
+                        <div key={`${item.type}-${item.label}`} className="positioning-item">
+                          <div className="positioning-item-label">{item.label}</div>
+                          <div className="positioning-item-detail">{item.detail}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="subtle">当前样本还不足以抽出明确支持证据。</div>
+                    )}
+                  </div>
+
+                  <div className="positioning-column">
+                    <div className="positioning-title">冲突证据</div>
+                    {conflictEvidence.length ? (
+                      conflictEvidence.map((item) => (
+                        <div key={`${item.type}-${item.label}`} className="positioning-item positioning-item-warning">
+                          <div className="positioning-item-label">{item.label}</div>
+                          <div className="positioning-item-detail">{item.detail}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="subtle">当前没有明显冲突信号，判型相对单一。</div>
+                    )}
+                  </div>
                 </div>
               </div>
 

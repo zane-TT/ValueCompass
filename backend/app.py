@@ -963,38 +963,198 @@ def sanitize_business_item(item: dict) -> dict:
     return sanitized
 
 
+POSITIONING_WATCH_METRICS = {
+    "product": ["销量", "单价", "毛利率", "存货周转", "渠道结构"],
+    "service": ["订单量", "履约能力", "利用率", "单位服务价格", "回款效率"],
+    "platform": ["GMV", "抽佣率", "商家数", "活跃用户", "广告/服务费变现"],
+}
+
+
+def _positioning_keywords() -> dict[str, list[str]]:
+    return {
+        "product": [
+            "产品",
+            "商品",
+            "白酒",
+            "家电",
+            "设备",
+            "药品",
+            "芯片",
+            "汽车",
+            "材料",
+            "制造",
+            "生产",
+            "零部件",
+        ],
+        "service": [
+            "服务",
+            "航运",
+            "物流",
+            "运输",
+            "租赁",
+            "港口",
+            "码头",
+            "交付",
+            "履约",
+            "工程",
+            "运维",
+        ],
+        "platform": [
+            "平台",
+            "佣金",
+            "抽佣",
+            "广告",
+            "撮合",
+            "信息服务",
+            "技术服务费",
+            "商家",
+            "用户",
+            "流量",
+            "交易服务",
+            "服务费",
+            "会员费",
+        ],
+    }
+
+
+def build_positioning_evidence_item(signal_type: str, label: str, detail: str) -> dict:
+    return {
+        "type": signal_type,
+        "label": label,
+        "detail": detail,
+    }
+
+
 def infer_company_positioning(
     company_main_business: str,
     industry: str,
     product_items: list[dict],
+    channel_items: list[dict] | None = None,
 ) -> dict:
-    item_names = " ".join(str(item.get("itemName", "")) for item in product_items)
-    search_text = " ".join([item_names, company_main_business or "", industry or ""])
+    keywords = _positioning_keywords()
+    item_names = [str(item.get("itemName", "")).strip() for item in product_items if str(item.get("itemName", "")).strip()]
+    top_item_names = item_names[:3]
+    top_items_text = "、".join(top_item_names)
+    channel_names = [str(item.get("itemName", "")).strip() for item in (channel_items or []) if str(item.get("itemName", "")).strip()]
+    search_text = " ".join(top_item_names + channel_names + [company_main_business or "", industry or ""])
 
-    service_keywords = ["服务", "航运", "物流", "运输", "租赁", "码头", "港口", "订阅", "云"]
-    product_keywords = ["产品", "白酒", "空调", "电器", "设备", "药", "芯片", "汽车", "酒"]
+    score_map = {"product": 0.0, "service": 0.0, "platform": 0.0}
+    evidence_map = {"product": [], "service": [], "platform": []}
 
-    service_score = sum(1 for keyword in service_keywords if keyword in search_text)
-    product_score = sum(1 for keyword in product_keywords if keyword in search_text)
+    def add_signal(target: str, score: float, signal_type: str, label: str, detail: str) -> None:
+        score_map[target] += score
+        evidence_map[target].append(build_positioning_evidence_item(signal_type, label, detail))
 
-    if service_score >= product_score + 1:
-        return {
-            "companyNature": "service",
-            "primaryUnitLabel": "业务",
-            "rationale": "这家公司主要卖的是运输、物流、码头或租赁等服务能力，所以这里的“按产品”更适合理解成“按业务单元”或“按服务线”看。",
-        }
+    for target, keyword_list in keywords.items():
+        matched = [keyword for keyword in keyword_list if keyword in search_text]
+        if matched:
+            sample = "、".join(matched[:3])
+            label_map = {
+                "product": "主营描述更像卖货",
+                "service": "主营描述更像卖能力",
+                "platform": "主营描述更像平台收费",
+            }
+            detail_map = {
+                "product": f"主营业务、行业或收入项里出现了 {sample} 等表述，更接近自有商品或设备销售。",
+                "service": f"主营业务、行业或收入项里出现了 {sample} 等表述，更接近运输、交付、租赁或工程服务。",
+                "platform": f"主营业务、行业或收入项里出现了 {sample} 等表述，更接近佣金、广告或撮合收费。",
+            }
+            add_signal(target, 1.6 if target != "platform" else 2.0, "keyword", label_map[target], detail_map[target])
 
-    if product_score >= service_score + 1:
-        return {
-            "companyNature": "product",
-            "primaryUnitLabel": "产品",
-            "rationale": "这家公司主要靠标准化商品或制造品赚钱，所以拆收入时直接按产品线看最合适。",
-        }
+    if product_items:
+        top_item = product_items[0]
+        top_ratio = float(top_item.get("revenueRatio") or 0)
+        top_margin = top_item.get("grossMargin")
+        if top_ratio >= 0.5 and top_items_text:
+            add_signal(
+                "product",
+                1.0,
+                "revenue_structure",
+                "收入按具体品类拆分较明显",
+                f"前几大收入项集中在 {top_items_text}，更像按具体商品或产品线管理收入。",
+            )
+        if top_margin is not None and float(top_margin) >= 0.45:
+            add_signal(
+                "platform",
+                0.8,
+                "margin_profile",
+                "高毛利更像轻资产收费",
+                "核心收入项毛利率较高，和平台型公司常见的佣金、广告或技术服务收费更接近。",
+            )
+
+    if channel_names:
+        direct_indicators = [name for name in channel_names if any(keyword in name for keyword in ["直营", "经销", "线下", "门店"])]
+        if direct_indicators:
+            add_signal(
+                "product",
+                0.7,
+                "channel_structure",
+                "渠道拆分更像卖货公司",
+                f"渠道里出现 { '、'.join(direct_indicators[:2]) } 等表述，说明公司更像围绕商品销售来组织渠道。",
+            )
+        platform_indicators = [name for name in channel_names if any(keyword in name for keyword in ["平台", "线上", "广告", "商家", "撮合"])]
+        if platform_indicators:
+            add_signal(
+                "platform",
+                1.1,
+                "channel_structure",
+                "渠道拆分带有平台生态特征",
+                f"渠道里出现 { '、'.join(platform_indicators[:2]) } 等表述，说明收入更可能来自平台流量或交易撮合。",
+            )
+
+    if not any(score_map.values()):
+        add_signal(
+            "service",
+            0.2,
+            "fallback",
+            "公开线索有限",
+            "当前公开描述不足以强判具体模式，先按服务/业务单元视角理解主营收入。",
+        )
+
+    sorted_scores = sorted(score_map.items(), key=lambda item: item[1], reverse=True)
+    company_nature, top_score = sorted_scores[0]
+    second_score = sorted_scores[1][1]
+    total_score = sum(score_map.values())
+    confidence = 0.45 if total_score <= 0 else min(0.95, round(0.45 + max(top_score - second_score, 0) / max(total_score, 1) * 0.5, 2))
+
+    primary_unit_label = {
+        "product": "产品",
+        "service": "业务",
+        "platform": "平台业务",
+    }[company_nature]
+    rationale_map = {
+        "product": "这家公司更像靠销售自有商品或设备赚钱，所以拆收入时直接按产品线看最合适。",
+        "service": "这家公司更像卖运输、交付、租赁或工程能力，所以这里的“按产品”更适合理解成“按业务单元”看。",
+        "platform": "这家公司更像通过撮合、流量、广告或技术服务收费赚钱，所以这里的核心不是卖货，而是看平台业务怎么变现。",
+    }
+
+    support_evidence = evidence_map[company_nature][:4]
+    conflict_evidence = []
+    for other_type, _score in sorted_scores[1:]:
+        if score_map[other_type] <= 0:
+            continue
+        dominant_label = {
+            "product": "仍有卖货特征",
+            "service": "仍有服务履约特征",
+            "platform": "仍有平台收费特征",
+        }[other_type]
+        dominant_detail = {
+            "product": "部分描述仍然像自营商品或设备销售，说明它不一定是纯轻资产模式。",
+            "service": "部分描述仍然像运输、交付或工程履约，说明它不只是单纯卖货。",
+            "platform": "部分描述仍然像平台抽佣、广告或撮合收费，说明它可能带有平台生态。",
+        }[other_type]
+        conflict_evidence.append(build_positioning_evidence_item("cross_signal", dominant_label, dominant_detail))
 
     return {
-        "companyNature": "mixed",
-        "primaryUnitLabel": "业务",
-        "rationale": "公司同时有产品和服务属性，页面里把收入项统一当成“业务单元”来看，会比简单叫产品更准确。",
+        "companyNature": company_nature,
+        "confidence": confidence,
+        "primaryUnitLabel": primary_unit_label,
+        "rationale": rationale_map[company_nature],
+        "evidence": {
+            "supports": support_evidence,
+            "conflicts": conflict_evidence[:3],
+        },
+        "watchMetrics": POSITIONING_WATCH_METRICS[company_nature],
     }
 
 
@@ -1005,21 +1165,21 @@ def build_interpreted_main_business_summary(
 ) -> str:
     top_item_names = [str(item.get("itemName", "")).strip() for item in product_items[:2] if str(item.get("itemName", "")).strip()]
     top_items_text = "、".join(top_item_names)
-    company_nature = company_positioning.get("companyNature", "mixed")
+    company_nature = company_positioning.get("companyNature", "service")
 
     if company_nature == "service":
         if top_items_text:
-            return f"可以把它理解成一家以{top_items_text}为核心的服务型公司。它主要不是卖实体产品，而是向客户出售运力、港口处理能力、租赁能力或物流组织能力。"
+            return f"可以把它理解成一家以{top_items_text}为核心的服务型公司。它主要不是卖实体产品，而是向客户出售运输、交付、租赁或组织能力。"
         return "可以把它理解成一家服务型公司。它主要不是卖实体产品，而是向客户出售运输、交付、租赁或物流能力。"
 
     if company_nature == "product":
         if top_items_text:
-            return f"可以把它理解成一家以{top_items_text}为核心的产品型公司。它主要通过销售标准化商品或设备来赚钱，价格和销量通常是最关键的观察点。"
-        return "可以把它理解成一家产品型公司。它主要通过销售标准化商品、设备或消费品来赚钱。"
+            return f"可以把它理解成一家以{top_items_text}为核心的产品型公司。它主要通过销售自己的商品、设备或消费品来赚钱，价格和销量通常是最关键的观察点。"
+        return "可以把它理解成一家产品型公司。它主要通过销售自己的商品、设备或消费品来赚钱。"
 
     if top_items_text:
-        return f"可以把它理解成一家同时有产品和服务属性的公司，目前收入更值得先从{top_items_text}这些核心业务单元切进去看。"
-    return "可以把它理解成一家同时有产品和服务属性的公司，分析时更适合先看核心业务单元，再拆产品和服务。"
+        return f"可以把它理解成一家以{top_items_text}为核心的平台型公司。它更像靠撮合交易、广告或技术服务收费赚钱，重点不是囤货，而是平台生态和变现效率。"
+    return "可以把它理解成一家平台型公司。它更像靠撮合交易、广告或技术服务收费赚钱，而不是依赖持有货物赚价差。"
 
 
 def infer_business_explanation(
@@ -1063,6 +1223,8 @@ def infer_business_explanation(
             business_category = rule.get("businessCategory", "service")
             if business_category == "product":
                 description = f"这块可以理解成公司的一个{label}单元，核心还是围绕具体商品销售展开。建议继续结合客户结构、渠道结构和成本结构一起看。"
+            elif company_positioning.get("companyNature") == "platform":
+                description = f"这块更适合理解成公司的一个{label}单元，核心不是持有货物赚差价，而是看平台流量、商家生态和收费效率怎么变。"
             else:
                 description = f"这块更适合理解成公司的一个{label}单元，核心卖的是运输、交付、订阅或其他服务能力，而不是狭义上的实体产品。"
             return {
@@ -1071,6 +1233,11 @@ def infer_business_explanation(
             }
 
     label = company_positioning.get("primaryUnitLabel", "业务")
+    if company_positioning.get("companyNature") == "platform":
+        return {
+            "businessDescription": f"这是公司主营收入里的一个{label}单元。判断它重要不重要，建议优先看流量、商家生态、抽佣率和平台变现效率，而不是只看卖了多少货。",
+            "priceDrivers": ["流量增长", "商家活跃度", "抽佣率", "广告变现", "竞争格局"],
+        }
     return {
         "businessDescription": f"这是公司主营收入里的一个{label}单元。判断它重要不重要，建议一起看客户是谁、怎么收费、成本怎么变。",
         "priceDrivers": ["行业供需", "产品或服务定价", "销量或利用率", "成本变化", "竞争格局"],
@@ -1234,14 +1401,17 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
     items = main_business_payload.get("items", [])
     company_main_business = str(profile_payload.get("mainBusiness", ""))
     industry = str(profile_payload.get("industry", ""))
+    raw_product_items = filter_business_items(items, "按产品分类")
+    raw_channel_items = extract_sales_mode_breakdown(annual_report_payload.get("textExcerpt", ""))
     company_positioning = infer_company_positioning(
         company_main_business=company_main_business,
         industry=industry,
-        product_items=filter_business_items(items, "按产品分类"),
+        product_items=raw_product_items,
+        channel_items=raw_channel_items,
     )
 
     product_items = enrich_business_items(
-        filter_business_items(items, "按产品分类"),
+        raw_product_items,
         company_main_business=company_main_business,
         industry=industry,
         dimension="product",
@@ -1262,7 +1432,7 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
         company_positioning=company_positioning,
     )
     channel_items = enrich_business_items(
-        extract_sales_mode_breakdown(annual_report_payload.get("textExcerpt", "")),
+        raw_channel_items,
         company_main_business=company_main_business,
         industry=industry,
         dimension="channel",
