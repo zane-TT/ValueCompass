@@ -134,10 +134,22 @@ type AiAnalysisResponse = {
 type BusinessTypeAnalysisPayload = {
   company_name: string;
   business_type: string;
+  company_nature?: "service" | "product" | "platform";
+  evidence_strength?: "strong" | "medium" | "weak";
   confidence: number;
   main_revenue_source: string;
   main_profit_source: string;
   growth_driver: string;
+  supports?: Array<{
+    point: string;
+    evidence: string;
+  }>;
+  conflicts?: Array<{
+    point: string;
+    evidence: string;
+  }>;
+  watch_metrics?: string[];
+  uncertainty?: string;
   key_evidence: Array<{
     evidence_type: string;
     description: string;
@@ -315,9 +327,72 @@ function getCompanyNatureLabel(companyNature?: RevenueStructureResponse["company
   return "服务型";
 }
 
+function normalizeAiCompanyNature(value?: string) {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("平台") || text.includes("platform")) return "platform" as const;
+  if (text.includes("产品") || text.includes("product")) return "product" as const;
+  return "service" as const;
+}
+
 function formatConfidence(value?: number) {
   if (value === undefined || value === null || Number.isNaN(value)) return "-";
   return `${Math.round(value * 100)}%`;
+}
+
+function mapAiBusinessTypeToPositioning(aiData?: BusinessTypeAnalysisPayload | null) {
+  if (!aiData) return null;
+
+  const companyNature = aiData.company_nature || normalizeAiCompanyNature(aiData.business_type);
+  const supports =
+    aiData.supports?.filter((item) => item.point || item.evidence).map((item) => ({
+      type: "ai_support",
+      label: item.point || "支持证据",
+      detail: item.evidence || "",
+    })) ||
+    aiData.key_evidence
+      ?.filter((item) => item.description)
+      .map((item) => ({
+        type: "ai_support",
+        label: item.evidence_type || "关键证据",
+        detail: item.description,
+      })) ||
+    [];
+
+  const conflicts =
+    aiData.conflicts?.filter((item) => item.point || item.evidence).map((item) => ({
+      type: "ai_conflict",
+      label: item.point || "反向证据",
+      detail: item.evidence || "",
+    })) ||
+    aiData.not_other_types_reason
+      ?.filter((item) => item.reason)
+      .map((item) => ({
+        type: "ai_conflict",
+        label: item.type || "反向证据",
+        detail: item.reason,
+      })) ||
+    [];
+
+  return {
+    source: "ai" as const,
+    companyNature,
+    confidence: aiData.confidence,
+    primaryUnitLabel: companyNature === "platform" ? "平台业务" : companyNature === "product" ? "产品" : "业务",
+    rationale: aiData.why_this_type || aiData.final_summary || "",
+    evidence: {
+      supports,
+      conflicts,
+    },
+    watchMetrics: aiData.watch_metrics?.length
+      ? aiData.watch_metrics
+      : companyNature === "platform"
+        ? ["GMV", "抽佣率", "商家数", "活跃用户", "广告/服务费变现"]
+        : companyNature === "product"
+          ? ["销量", "单价", "毛利率", "存货周转", "渠道结构"]
+          : ["订单量", "履约能力", "利用率", "单位服务价格", "回款效率"],
+    evidenceStrength: aiData.evidence_strength,
+    uncertainty: aiData.uncertainty,
+  };
 }
 
 function renderBreakdownRows(items: RevenueBreakdownItem[]) {
@@ -369,13 +444,14 @@ export default function HomePage() {
   const [peData, setPeData] = useState<PeTrendResponse | null>(null);
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
-  const primaryUnitLabel = revenueStructureData?.companyPositioning?.primaryUnitLabel || "业务";
-  const companyNatureLabel = getCompanyNatureLabel(revenueStructureData?.companyPositioning?.companyNature);
-  const supportEvidence = revenueStructureData?.companyPositioning?.evidence?.supports ?? [];
-  const conflictEvidence = revenueStructureData?.companyPositioning?.evidence?.conflicts ?? [];
-  const watchMetrics = revenueStructureData?.companyPositioning?.watchMetrics ?? [];
-
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
+  const aiPositioning = mapAiBusinessTypeToPositioning(aiData?.businessTypeAnalysis);
+  const displayedPositioning = aiPositioning || revenueStructureData?.companyPositioning || null;
+  const primaryUnitLabel = displayedPositioning?.primaryUnitLabel || "业务";
+  const companyNatureLabel = getCompanyNatureLabel(displayedPositioning?.companyNature);
+  const supportEvidence = displayedPositioning?.evidence?.supports ?? [];
+  const conflictEvidence = displayedPositioning?.evidence?.conflicts ?? [];
+  const watchMetrics = displayedPositioning?.watchMetrics ?? [];
 
   const balanceChartRef = useRef<HTMLDivElement | null>(null);
   const trendChartRef = useRef<HTMLDivElement | null>(null);
@@ -948,17 +1024,27 @@ export default function HomePage() {
                     年报原文：{revenueStructureData.businessSummary.mainBusiness}
                   </div>
                 ) : null}
-                {revenueStructureData.companyPositioning?.rationale ? (
+                {displayedPositioning?.rationale ? (
                   <div className="summary-copy">
-                    为什么按{primaryUnitLabel}看：{revenueStructureData.companyPositioning.rationale}
+                    为什么按{primaryUnitLabel}看：{displayedPositioning.rationale}
                   </div>
                 ) : null}
                 <div className="summary-copy">
                   类型判断：{companyNatureLabel}
-                  {revenueStructureData.companyPositioning?.confidence !== undefined
-                    ? ` · 置信度 ${formatConfidence(revenueStructureData.companyPositioning.confidence)}`
+                  {displayedPositioning?.confidence !== undefined
+                    ? ` · 置信度 ${formatConfidence(displayedPositioning.confidence)}`
                     : ""}
                 </div>
+                <div className="summary-copy">
+                  {aiPositioning
+                    ? "当前依据：AI 已结合财报结构、业务资料和财务特征做判断。"
+                    : "当前依据：规则兜底判断，建议点击“生成 AI 分析”获取更可靠的商业模式结论。"}
+                </div>
+                {aiPositioning?.evidenceStrength === "weak" || aiPositioning?.uncertainty ? (
+                  <div className="summary-copy">
+                    {aiPositioning?.uncertainty || "当前 AI 证据偏弱，这个判断更适合作为分析起点。"}
+                  </div>
+                ) : null}
                 {watchMetrics.length ? (
                   <div className="summary-copy">重点跟踪：{watchMetrics.join("、")}</div>
                 ) : null}
@@ -979,7 +1065,7 @@ export default function HomePage() {
                   <div className="mini-metric-label">公司类型</div>
                   <div className="mini-metric-value">{companyNatureLabel}</div>
                   <div className="mini-metric-sub">
-                    置信度 {formatConfidence(revenueStructureData.companyPositioning?.confidence)}
+                    置信度 {formatConfidence(displayedPositioning?.confidence)}
                   </div>
                 </div>
 
@@ -1035,7 +1121,11 @@ export default function HomePage() {
                         </div>
                       ))
                     ) : (
-                      <div className="subtle">当前样本还不足以抽出明确支持证据。</div>
+                      <div className="subtle">
+                        {aiPositioning
+                          ? "这次 AI 也没有给出足够强的支持证据，说明当前判断仍偏弱。"
+                          : "当前还是规则兜底阶段，建议点击“生成 AI 分析”后再看支持证据。"}
+                      </div>
                     )}
                   </div>
 
@@ -1049,7 +1139,11 @@ export default function HomePage() {
                         </div>
                       ))
                     ) : (
-                      <div className="subtle">当前没有明显冲突信号，判型相对单一。</div>
+                      <div className="subtle">
+                        {aiPositioning
+                          ? "当前没有明显反向证据，AI 认为主导模式相对单一。"
+                          : "当前没有抓到明确反向信号，但这并不代表判断已经足够强。"}
+                      </div>
                     )}
                   </div>
                 </div>
