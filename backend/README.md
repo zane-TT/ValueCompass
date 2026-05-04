@@ -70,3 +70,7 @@ POST http://127.0.0.1:5001/api/ai-analysis
   "years": 8
 }
 ```
+
+## Notes
+
+Start the backend before the frontend if you want to verify the full app flow locally.
