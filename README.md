@@ -25,7 +25,7 @@
 ## 后端启动
 
 ```bash
-cd D:\github\ValueCompass\backend
+cd ValueCompass\backend
 D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
 D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
 ```
