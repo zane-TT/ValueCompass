@@ -275,6 +275,25 @@ def get_cache_overview() -> dict:
     }
 
 
+def list_recent_cache_files(limit: int = 10) -> list[dict]:
+    cache_files = sorted(
+        CACHE_DIR.glob("*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    recent_files = []
+    for path in cache_files[:limit]:
+        stat = path.stat()
+        recent_files.append(
+            {
+                "name": path.name,
+                "sizeBytes": stat.st_size,
+                "modifiedAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            }
+        )
+    return recent_files
+
+
 def parse_ak_value(value: object) -> float:
     if value is None or pd.isna(value) or value is False:
         return 0.0
@@ -2106,12 +2125,30 @@ def api_health():
     )
 
 
+@app.get("/api/cache/stats")
+def api_cache_stats():
+    limit = request.args.get("limit", "10").strip() or "10"
+    try:
+        recent_limit = max(1, min(int(limit), 50))
+    except ValueError:
+        return jsonify({"error": "limit must be an integer between 1 and 50."}), 400
+
+    return jsonify(
+        {
+            "status": "ok",
+            "cache": get_cache_overview(),
+            "recentFiles": list_recent_cache_files(limit=recent_limit),
+        }
+    )
+
+
 @app.get("/")
 def health_message():
     return jsonify(
         {
             "message": "Flask API is running. Use the Next frontend for the UI.",
             "healthApi": "/api/health",
+            "cacheStatsApi": "/api/cache/stats?limit=10",
             "balanceApi": "/api/balance?stock=600519",
             "trendApi": "/api/revenue-market-cap?stock=000333&years=8",
             "revenueStructureApi": "/api/revenue-structure?stock=600519&years=8",
