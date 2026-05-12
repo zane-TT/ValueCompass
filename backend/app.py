@@ -264,6 +264,17 @@ def save_cached_payload(payload: dict, prefix: str, *parts: object) -> dict:
     return payload
 
 
+def get_cache_overview() -> dict:
+    cache_files = sorted(CACHE_DIR.glob("*.json"))
+    total_bytes = sum(path.stat().st_size for path in cache_files)
+    return {
+        "directory": str(CACHE_DIR),
+        "exists": CACHE_DIR.exists(),
+        "fileCount": len(cache_files),
+        "totalBytes": total_bytes,
+    }
+
+
 def parse_ak_value(value: object) -> float:
     if value is None or pd.isna(value) or value is False:
         return 0.0
@@ -2070,6 +2081,8 @@ def api_business_type_analysis():
 
 @app.get("/api/health")
 def api_health():
+    now = datetime.now(timezone.utc)
+    cache_overview = get_cache_overview()
     endpoints = {
         "balance": "/api/balance?stock=600519",
         "revenueMarketCap": "/api/revenue-market-cap?stock=000333&years=8",
@@ -2084,7 +2097,10 @@ def api_health():
             "status": "ok",
             "service": "ValueCompass backend",
             "startedAt": APP_STARTED_AT.isoformat(),
-            "now": datetime.now(timezone.utc).isoformat(),
+            "now": now.isoformat(),
+            "uptimeSeconds": round((now - APP_STARTED_AT).total_seconds(), 3),
+            "pythonVersion": sys.version.split()[0],
+            "cache": cache_overview,
             "availableEndpoints": endpoints,
         }
     )
