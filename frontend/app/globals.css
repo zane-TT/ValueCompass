@@ -165,6 +165,41 @@ input {
   font-size: 14px;
 }
 
+.preset-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.preset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.preset-button span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preset-button.active {
+  border-color: var(--blue);
+  background: #eef4ff;
+  color: var(--blue);
+}
+
+.preset-button.active span {
+  color: var(--blue);
+}
+
 .error-box {
   margin-top: 12px;
   padding: 12px 14px;

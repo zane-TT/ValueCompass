@@ -176,6 +176,13 @@ type QueryState = {
   years: string;
 };
 
+const STOCK_PRESETS = [
+  { code: "600519", label: "贵州茅台" },
+  { code: "000333", label: "美的集团" },
+  { code: "601919", label: "中远海控" },
+  { code: "300052", label: "中青宝" },
+];
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:5001";
 
 const BALANCE_TERM_HELP: Record<string, BalanceHelp> = {
@@ -974,6 +981,11 @@ export default function HomePage() {
     }
   }
 
+  function applyStockPreset(nextStock: string) {
+    setStock(nextStock);
+    void loadAllData({ stock: nextStock });
+  }
+
   const combinedStatus = [
     balanceStatus,
     trendStatus,
@@ -1025,6 +1037,19 @@ export default function HomePage() {
 
         <div className="status">{combinedStatus}</div>
         {combinedError ? <div className="error-box">{combinedError}</div> : null}
+        <div className="preset-row">
+          {STOCK_PRESETS.map((item) => (
+            <button
+              key={item.code}
+              type="button"
+              className={`preset-button ${stock === item.code ? "active" : ""}`}
+              onClick={() => applyStockPreset(item.code)}
+            >
+              {item.label}
+              <span>{item.code}</span>
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="panel">
