@@ -26,7 +26,7 @@
 
 ```bash
 cd ValueCompass\backend
-D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
+python.exe -m pip install -r requirements.txt
 D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
 ```
 
