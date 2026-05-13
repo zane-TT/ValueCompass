@@ -170,6 +170,12 @@ type BalanceHelp = {
   watch: string;
 };
 
+type QueryState = {
+  stock: string;
+  period: string;
+  years: string;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:5001";
 
 const BALANCE_TERM_HELP: Record<string, BalanceHelp> = {
@@ -418,6 +424,14 @@ function renderBreakdownRows(items: RevenueBreakdownItem[]) {
   ));
 }
 
+function readQueryState(searchParams: URLSearchParams): QueryState {
+  return {
+    stock: searchParams.get("stock")?.trim() || "600519",
+    period: searchParams.get("period")?.trim() || "",
+    years: searchParams.get("years")?.trim() || "8",
+  };
+}
+
 export default function HomePage() {
   const [stock, setStock] = useState("600519");
   const [period, setPeriod] = useState("");
@@ -471,6 +485,22 @@ export default function HomePage() {
     instanceRef.current = echarts.getInstanceByDom(ref.current) ?? echarts.init(ref.current);
   }
 
+  function getQueryState(overrides?: Partial<QueryState>): QueryState {
+    return {
+      stock: (overrides?.stock ?? stock).trim() || "600519",
+      period: (overrides?.period ?? period).trim(),
+      years: (overrides?.years ?? years).trim() || "8",
+    };
+  }
+
+  function syncUrl(query: QueryState) {
+    const params = new URLSearchParams();
+    params.set("stock", query.stock);
+    params.set("years", query.years);
+    if (query.period) params.set("period", query.period);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }
+
   useEffect(() => {
     ensureChart(balanceChartRef, balanceChart);
     ensureChart(trendChartRef, trendChart);
@@ -497,7 +527,11 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    void loadAllData();
+    const initialQuery = readQueryState(new URLSearchParams(window.location.search));
+    setStock(initialQuery.stock);
+    setPeriod(initialQuery.period);
+    setYears(initialQuery.years);
+    void loadAllData(initialQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -791,13 +825,14 @@ export default function HomePage() {
     requestAnimationFrame(() => profitChart.current?.resize());
   }, [profitData]);
 
-  async function loadBalanceData() {
+  async function loadBalanceData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
     setBalanceStatus("正在加载 AKShare 资产负债数据...");
     setBalanceError(null);
 
     try {
-      const params = new URLSearchParams({ stock: stock || "600519" });
-      if (period.trim()) params.set("period", period.trim());
+      const params = new URLSearchParams({ stock: query.stock });
+      if (query.period) params.set("period", query.period);
 
       const response = await fetch(`${API_BASE}/api/balance?${params.toString()}`);
       const data = (await response.json()) as BalanceResponse & { error?: string };
@@ -812,12 +847,13 @@ export default function HomePage() {
     }
   }
 
-  async function loadTrendData() {
+  async function loadTrendData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
     setTrendStatus("正在加载 AKShare 业绩与市值数据...");
     setTrendError(null);
 
     try {
-      const params = new URLSearchParams({ stock: stock || "600519", years: years || "8" });
+      const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/revenue-market-cap?${params.toString()}`);
       const data = (await response.json()) as TrendResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "业绩与市值接口请求失败");
@@ -831,12 +867,13 @@ export default function HomePage() {
     }
   }
 
-  async function loadPeData() {
+  async function loadPeData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
     setPeStatus("正在加载 AKShare 市盈率数据...");
     setPeError(null);
 
     try {
-      const params = new URLSearchParams({ stock: stock || "600519", years: years || "8" });
+      const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/pe-trend?${params.toString()}`);
       const data = (await response.json()) as PeTrendResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "市盈率接口请求失败");
@@ -850,12 +887,13 @@ export default function HomePage() {
     }
   }
 
-  async function loadProfitMarketCapData() {
+  async function loadProfitMarketCapData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
     setProfitStatus("正在加载 AKShare 净利润与市值数据...");
     setProfitError(null);
 
     try {
-      const params = new URLSearchParams({ stock: stock || "600519", years: years || "8" });
+      const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/profit-market-cap?${params.toString()}`);
       const data = (await response.json()) as ProfitMarketCapResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "净利润与市值接口请求失败");
@@ -869,13 +907,14 @@ export default function HomePage() {
     }
   }
 
-  async function loadRevenueStructureData() {
+  async function loadRevenueStructureData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
     setRevenueStructureStatus("正在加载公司收入结构拆解...");
     setRevenueStructureError(null);
     setRevenueStructureData(null);
 
     try {
-      const params = new URLSearchParams({ stock: stock || "600519", years: years || "8" });
+      const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/revenue-structure?${params.toString()}`);
       const data = (await response.json()) as RevenueStructureResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "收入结构接口请求失败");
@@ -889,18 +928,20 @@ export default function HomePage() {
     }
   }
 
-  async function loadAllData() {
+  async function loadAllData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
     setAiData(null);
     setAiError(null);
     setAiStatus("点击“生成 AI 分析”获取综合解读");
     setRevenueStructureData(null);
+    syncUrl(query);
 
     await Promise.all([
-      loadBalanceData(),
-      loadTrendData(),
-      loadPeData(),
-      loadProfitMarketCapData(),
-      loadRevenueStructureData(),
+      loadBalanceData(query),
+      loadTrendData(query),
+      loadPeData(query),
+      loadProfitMarketCapData(query),
+      loadRevenueStructureData(query),
     ]);
   }
 
@@ -915,9 +956,9 @@ export default function HomePage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          stock: stock || "600519",
-          period: period.trim() || null,
-          years: Number(years || "8"),
+          stock: getQueryState().stock,
+          period: getQueryState().period || null,
+          years: Number(getQueryState().years),
         }),
       });
 
