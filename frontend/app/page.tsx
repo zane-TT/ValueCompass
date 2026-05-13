@@ -176,6 +176,36 @@ type QueryState = {
   years: string;
 };
 
+type HealthResponse = {
+  status: string;
+  service: string;
+  startedAt: string;
+  now: string;
+  uptimeSeconds: number;
+  pythonVersion: string;
+  cache: {
+    directory: string;
+    exists: boolean;
+    fileCount: number;
+    totalBytes: number;
+  };
+};
+
+type CacheStatsResponse = {
+  status: string;
+  cache: {
+    directory: string;
+    exists: boolean;
+    fileCount: number;
+    totalBytes: number;
+  };
+  recentFiles: Array<{
+    name: string;
+    sizeBytes: number;
+    modifiedAt: string;
+  }>;
+};
+
 const STOCK_PRESETS = [
   { code: "600519", label: "贵州茅台" },
   { code: "000333", label: "美的集团" },
@@ -352,6 +382,20 @@ function formatConfidence(value?: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatBytes(value?: number) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatUptime(seconds?: number) {
+  if (seconds === undefined || seconds === null || Number.isNaN(seconds)) return "-";
+  if (seconds < 60) return `${Math.round(seconds)} 秒`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`;
+  return `${(seconds / 3600).toFixed(1)} 小时`;
+}
+
 function mapAiBusinessTypeToPositioning(aiData?: BusinessTypeAnalysisPayload | null) {
   if (!aiData) return null;
 
@@ -459,6 +503,7 @@ export default function HomePage() {
   const [revenueStructureError, setRevenueStructureError] = useState<string | null>(null);
 
   const [aiError, setAiError] = useState<string | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
 
   const [balanceData, setBalanceData] = useState<BalanceResponse | null>(null);
   const [trendData, setTrendData] = useState<TrendResponse | null>(null);
@@ -466,6 +511,8 @@ export default function HomePage() {
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
+  const [healthData, setHealthData] = useState<HealthResponse | null>(null);
+  const [cacheStats, setCacheStats] = useState<CacheStatsResponse | null>(null);
   const aiPositioning = mapAiBusinessTypeToPositioning(aiData?.businessTypeAnalysis);
   const displayedPositioning = aiPositioning || revenueStructureData?.companyPositioning || null;
   const primaryUnitLabel = displayedPositioning?.primaryUnitLabel || "业务";
@@ -935,6 +982,29 @@ export default function HomePage() {
     }
   }
 
+  async function loadSystemStatus() {
+    setHealthError(null);
+
+    try {
+      const [healthResponse, cacheResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/health`),
+        fetch(`${API_BASE}/api/cache/stats?limit=5`),
+      ]);
+
+      const healthPayload = (await healthResponse.json()) as HealthResponse & { error?: string };
+      const cachePayload = (await cacheResponse.json()) as CacheStatsResponse & { error?: string };
+
+      if (!healthResponse.ok) throw new Error(healthPayload.error || "健康检查请求失败");
+      if (!cacheResponse.ok) throw new Error(cachePayload.error || "缓存统计请求失败");
+
+      setHealthData(healthPayload);
+      setCacheStats(cachePayload);
+    } catch (fetchError) {
+      const message = fetchError instanceof Error ? fetchError.message : "系统状态加载失败";
+      setHealthError(message);
+    }
+  }
+
   async function loadAllData(overrides?: Partial<QueryState>) {
     const query = getQueryState(overrides);
     setAiData(null);
@@ -949,6 +1019,7 @@ export default function HomePage() {
       loadPeData(query),
       loadProfitMarketCapData(query),
       loadRevenueStructureData(query),
+      loadSystemStatus(),
     ]);
   }
 
@@ -1049,6 +1120,68 @@ export default function HomePage() {
               <span>{item.code}</span>
             </button>
           ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="chart-card">
+          <div className="ai-card-header">
+            <div>
+              <h3>系统状态</h3>
+              <div className="subtle">查看后端是否在线、缓存是否可用，以及最近生成的缓存文件。</div>
+            </div>
+
+            <button type="button" className="query-button" onClick={() => void loadSystemStatus()}>
+              刷新状态
+            </button>
+          </div>
+
+          {healthError ? <div className="error-box">{healthError}</div> : null}
+
+          <div className="system-grid">
+            <div className="mini-metric-card">
+              <div className="mini-metric-label">后端服务</div>
+              <div className="mini-metric-value">{healthData?.status === "ok" ? "正常" : "-"}</div>
+              <div className="mini-metric-sub">{healthData?.service || "未连接"}</div>
+            </div>
+
+            <div className="mini-metric-card">
+              <div className="mini-metric-label">运行时长</div>
+              <div className="mini-metric-value">{formatUptime(healthData?.uptimeSeconds)}</div>
+              <div className="mini-metric-sub">Python {healthData?.pythonVersion || "-"}</div>
+            </div>
+
+            <div className="mini-metric-card">
+              <div className="mini-metric-label">缓存文件数</div>
+              <div className="mini-metric-value">{cacheStats?.cache.fileCount ?? "-"}</div>
+              <div className="mini-metric-sub">{cacheStats?.cache.exists ? "缓存目录可用" : "缓存目录不可用"}</div>
+            </div>
+
+            <div className="mini-metric-card">
+              <div className="mini-metric-label">缓存体积</div>
+              <div className="mini-metric-value">{formatBytes(cacheStats?.cache.totalBytes)}</div>
+              <div className="mini-metric-sub">{cacheStats?.cache.directory || "-"}</div>
+            </div>
+          </div>
+
+          <div className="revenue-section-card system-files-card">
+            <h4>最近缓存文件</h4>
+            {cacheStats?.recentFiles.length ? (
+              cacheStats.recentFiles.map((item) => (
+                <div key={item.name} className="revenue-row">
+                  <div>
+                    <div className="revenue-row-title">{item.name}</div>
+                    <div className="revenue-row-meta">{item.modifiedAt}</div>
+                  </div>
+                  <div className="revenue-row-side">
+                    <div>{formatBytes(item.sizeBytes)}</div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="subtle">当前还没有读取到缓存文件列表。</div>
+            )}
+          </div>
         </div>
       </section>
 
