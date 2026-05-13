@@ -27,7 +27,7 @@
 ```bash
 cd ValueCompass\backend
 python.exe -m pip install -r requirements.txt
-D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
+python.exe app.py
 ```
 
 后端默认地址：
