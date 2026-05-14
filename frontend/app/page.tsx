@@ -58,6 +58,11 @@ type ProfitMarketCapResponse = {
   conclusion: string;
 };
 
+type FinancialPoint = {
+  date: string;
+  value: number;
+};
+
 type RevenueBreakdownItem = {
   itemName: string;
   revenue: number;
@@ -366,6 +371,90 @@ function formatPercent(value?: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatYiValue(value: number) {
+  return `${value.toFixed(2)} 亿元`;
+}
+
+function formatYiChange(value: number) {
+  if (Math.abs(value) < 0.01) return "基本持平";
+  return `${value > 0 ? "增加" : "减少"} ${Math.abs(value).toFixed(2)} 亿元`;
+}
+
+function getYearEndPoints(points: FinancialPoint[]) {
+  const byYear = new Map<string, FinancialPoint>();
+
+  points
+    .filter((item) => Number.isFinite(item.value) && !Number.isNaN(Date.parse(item.date)))
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date))
+    .forEach((item) => {
+      const year = new Date(item.date).getFullYear().toString();
+      byYear.set(year, item);
+    });
+
+  return Array.from(byYear.entries()).map(([year, point]) => ({ year, ...point }));
+}
+
+function getProfitStatus(value: number) {
+  if (value > 0) return "赚钱";
+  if (value < 0) return "亏钱";
+  return "盈亏平衡";
+}
+
+function buildPerformanceInsightPoints(
+  profitData?: ProfitMarketCapResponse | null,
+  trendData?: TrendResponse | null
+) {
+  const profitByYear = getYearEndPoints(profitData?.profitBars ?? []);
+  const revenueByYear = getYearEndPoints(trendData?.revenueBars ?? []);
+  const insights: string[] = [];
+
+  if (profitByYear.length) {
+    const recentProfit = profitByYear.slice(-4);
+    const latest = recentProfit[recentProfit.length - 1];
+    const profitableYears = recentProfit.filter((item) => item.value > 0).length;
+    const lossYears = recentProfit.filter((item) => item.value < 0).length;
+    const status = getProfitStatus(latest.value);
+    const periodLabel = latest.date.slice(5, 10) === "12-31" ? `${latest.year} 年` : `${latest.year} 年截至 ${latest.date.slice(5)}`;
+
+    insights.push(
+      `盈利状态：${periodLabel}归母净利润为 ${formatYiValue(latest.value)}，公司最近一个报告期是${status}的。最近 ${recentProfit.length} 年中，${profitableYears} 年盈利、${lossYears} 年亏损。`
+    );
+
+    if (recentProfit.length >= 2) {
+      const first = recentProfit[0];
+      const change = latest.value - first.value;
+      const trend =
+        Math.abs(change) < 0.01
+          ? "整体基本持平"
+          : change > 0
+            ? "整体改善"
+            : "整体走弱";
+      const profitSeries = recentProfit
+        .map((item) => `${item.year} 年 ${formatYiValue(item.value)}`)
+        .join("、");
+
+      insights.push(
+        `净利润趋势：最近几年归母净利润分别为 ${profitSeries}，从 ${first.year} 年到 ${latest.year} 年${formatYiChange(change)}，${trend}。`
+      );
+    }
+  }
+
+  if (revenueByYear.length >= 2) {
+    const recentRevenue = revenueByYear.slice(-4);
+    const first = recentRevenue[0];
+    const latest = recentRevenue[recentRevenue.length - 1];
+    const change = latest.value - first.value;
+    const trend =
+      Math.abs(change) < 0.01 ? "规模基本稳定" : change > 0 ? "收入规模在扩大" : "收入规模在收缩";
+
+    insights.push(
+      `营收趋势：${first.year} 年营业收入为 ${formatYiValue(first.value)}，${latest.year} 年为 ${formatYiValue(latest.value)}，${formatYiChange(change)}，${trend}。`
+    );
+  }
+
+  return insights;
+}
+
 function getCompanyNatureLabel(companyNature?: RevenueStructureResponse["companyPositioning"]["companyNature"]) {
   if (companyNature === "product") return "产品型";
   if (companyNature === "platform") return "平台型";
@@ -522,6 +611,10 @@ export default function HomePage() {
   const supportEvidence = displayedPositioning?.evidence?.supports ?? [];
   const conflictEvidence = displayedPositioning?.evidence?.conflicts ?? [];
   const watchMetrics = displayedPositioning?.watchMetrics ?? [];
+  const automaticInsightPoints = [
+    ...buildPerformanceInsightPoints(profitData, trendData),
+    ...(revenueStructureData?.insightPoints ?? []),
+  ];
 
   const balanceChartRef = useRef<HTMLDivElement | null>(null);
   const trendChartRef = useRef<HTMLDivElement | null>(null);
@@ -1372,8 +1465,8 @@ export default function HomePage() {
               <div className="revenue-section-card revenue-section-card-wide">
                 <h4>自动结论</h4>
                 <div className="insight-list">
-                  {revenueStructureData.insightPoints.length ? (
-                    revenueStructureData.insightPoints.map((item) => (
+                  {automaticInsightPoints.length ? (
+                    automaticInsightPoints.map((item) => (
                       <div key={item} className="insight-item">
                         {item}
                       </div>
