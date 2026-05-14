@@ -24,47 +24,54 @@
 
 ## 生产式单入口启动
 
-先构建前端静态产物，再启动 FastAPI。启动后同一个地址会同时返回前端页面和后端 `/api/*`。
+先构建前端静态产物，再启动 FastAPI。启动后只需要访问一个地址，FastAPI 会同时返回前端页面、前端静态资源和后端 `/api/*`。
 
-```bash
+```powershell
 cd D:\github\ValueCompass\frontend
 npm install
 npm run build
 
 cd D:\github\ValueCompass\backend
-python.exe -m pip install -r requirements.txt
-python.exe app.py
+D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
+D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
 ```
 
-默认地址：
+启动后访问：
 
 ```text
 http://127.0.0.1:5001
 ```
 
-## 后端单独启动
-
-```bash
-cd ValueCompass\backend
-python.exe -m pip install -r requirements.txt
-python.exe app.py
-```
-
-后端默认地址：
+路由说明：
 
 ```text
-http://127.0.0.1:5001
+/              前端页面
+/_next/...     前端静态资源
+/api/...       后端 API
+/docs          FastAPI 自动接口文档
 ```
 
-## 前端启动
+## 开发模式
 
-```bash
+开发时可以分开启动，前端支持热更新，后端仍然跑在 `5001`。
+
+后端：
+
+```powershell
+cd D:\github\ValueCompass\backend
+D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
+D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
+```
+
+前端：
+
+```powershell
 cd D:\github\ValueCompass\frontend
 npm install
 npm run dev
 ```
 
-前端默认地址：
+开发地址：
 
 ```text
 http://127.0.0.1:3000
