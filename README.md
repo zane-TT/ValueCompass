@@ -3,7 +3,7 @@
 这是一个最小可运行的财报可视化 Demo：
 
 - 前端：Next.js + ECharts
-- 后端：Flask + AKShare
+- 后端：FastAPI + AKShare
 - AI 分析：OpenAI-compatible API（从后端发起调用）
 
 ## 当前功能
@@ -22,7 +22,27 @@
 - [frontend/app/page.tsx](D:/github/ValueCompass/frontend/app/page.tsx)
 - [frontend/app/globals.css](D:/github/ValueCompass/frontend/app/globals.css)
 
-## 后端启动
+## 生产式单入口启动
+
+先构建前端静态产物，再启动 FastAPI。启动后同一个地址会同时返回前端页面和后端 `/api/*`。
+
+```bash
+cd D:\github\ValueCompass\frontend
+npm install
+npm run build
+
+cd D:\github\ValueCompass\backend
+python.exe -m pip install -r requirements.txt
+python.exe app.py
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:5001
+```
+
+## 后端单独启动
 
 ```bash
 cd ValueCompass\backend

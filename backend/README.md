@@ -1,6 +1,6 @@
 # Backend
 
-`backend/` 是当前项目的 Flask API。
+`backend/` 是当前项目的 FastAPI API，同时可以托管 `frontend/out` 静态前端。
 
 已提供接口：
 
@@ -18,6 +18,16 @@ D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirement
 ```
 
 ## 启动
+
+如果需要 FastAPI 统一返回前端页面，先构建前端：
+
+```bash
+cd D:\github\ValueCompass\frontend
+npm install
+npm run build
+```
+
+然后启动后端：
 
 ```bash
 cd D:\github\ValueCompass\backend
@@ -73,4 +83,4 @@ POST http://127.0.0.1:5001/api/ai-analysis
 
 ## Notes
 
-Start the backend before the frontend if you want to verify the full app flow locally.
+本地开发时仍然可以单独运行 `npm run dev`；生产式运行时建议使用 `npm run build` 产出静态文件，再由 FastAPI 统一托管页面和 `/api/*`。

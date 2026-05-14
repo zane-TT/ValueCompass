@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "财报可视化分析系统",
-  description: "AKShare + Flask + Next.js + ECharts",
+  description: "AKShare + FastAPI + Next.js + ECharts",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

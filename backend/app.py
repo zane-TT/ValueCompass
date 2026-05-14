@@ -9,14 +9,16 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import akshare as ak
 import akshare.stock_feature.stock_disclosure_cninfo as disclosure_cninfo
 import httpx
 import pandas as pd
 import requests
-from flask import Flask, abort, jsonify, request, send_from_directory
-from flask_cors import CORS
+from fastapi import Body, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -28,14 +30,12 @@ except ImportError:
         sys.path.append(bundled_python_packages)
     from pypdf import PdfReader
 
-app = Flask(__name__)
-CORS(
-    app,
-    resources={
-        r"/api/*": {
-            "origins": ["http://127.0.0.1:3000", "http://localhost:3000"],
-        }
-    },
+app = FastAPI(title="ValueCompass API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 YI = 100000000
@@ -47,6 +47,16 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai-proxy.org/v1"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-nano-2026-03-17"
 DEFAULT_OPENAI_TEMPERATURE = 0.1
 APP_STARTED_AT = datetime.now(timezone.utc)
+
+
+def get_frontend_file(path: str) -> Path | None:
+    candidate = (FRONTEND_OUT_DIR / path).resolve()
+    try:
+        candidate.relative_to(FRONTEND_OUT_DIR.resolve())
+    except ValueError:
+        return None
+
+    return candidate if candidate.is_file() else None
 
 AI_ANALYSIS_SYSTEM_PROMPT = """
 你是一名A股财报分析助手。
@@ -1926,114 +1936,127 @@ def generate_business_type_analysis(
 
 
 @app.get("/api/pe-trend")
-def api_pe_trend():
-    stock = request.args.get("stock", "000333").strip() or "000333"
-    years_param = request.args.get("years", "8")
-    refresh = request.args.get("refresh") == "1"
+def api_pe_trend(stock: str = "000333", years: str = "8", refresh: str = ""):
+    stock = stock.strip() or "000333"
+    years_param = years
+    should_refresh = refresh == "1"
 
     try:
         years = normalize_years(years_param, default=8)
 
-        if not refresh:
+        if not should_refresh:
             cached_payload = load_cached_payload("pe_trend_v1", stock, years)
             if cached_payload is not None:
-                return jsonify(cached_payload)
+                return cached_payload
 
         payload = build_pe_trend_payload(stock=stock, years=years)
         save_cached_payload(payload, "pe_trend_v1", stock, years)
-        return jsonify(payload)
+        return payload
 
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "years": years_param},
+            status_code=400,
+        )
 
 
 @app.get("/api/balance")
-def api_balance():
-    stock = request.args.get("stock", "600519").strip() or "600519"
-    period = request.args.get("period")
+def api_balance(stock: str = "600519", period: str | None = None):
+    stock = stock.strip() or "600519"
 
     try:
         normalized_period = normalize_period(period)
         cached_payload = load_cached_payload("balance", stock, normalized_period or "latest")
         if cached_payload is not None:
-            return jsonify(cached_payload)
+            return cached_payload
 
         payload = get_balance_payload(stock=stock, period=period)
         save_cached_payload(payload, "balance", stock, normalized_period or "latest")
-        return jsonify(payload)
+        return payload
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return jsonify({"error": str(exc), "stock": stock, "period": period}), 400
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "period": period},
+            status_code=400,
+        )
 
 
 @app.get("/api/revenue-market-cap")
-def api_revenue_market_cap():
-    stock = request.args.get("stock", "000333").strip() or "000333"
-    years_param = request.args.get("years", "8")
+def api_revenue_market_cap(stock: str = "000333", years: str = "8"):
+    stock = stock.strip() or "000333"
+    years_param = years
 
     try:
         years = normalize_years(years_param, default=8)
         cached_payload = load_cached_payload("revenue_market_cap_v2", stock, years)
         if cached_payload is not None:
-            return jsonify(cached_payload)
+            return cached_payload
 
         payload = get_revenue_market_cap_payload(stock=stock, years=years)
         save_cached_payload(payload, "revenue_market_cap_v2", stock, years)
-        return jsonify(payload)
+        return payload
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "years": years_param},
+            status_code=400,
+        )
 
 
 @app.get("/api/revenue-structure")
-def api_revenue_structure():
-    stock = request.args.get("stock", "600519").strip() or "600519"
-    years_param = request.args.get("years", "8")
-    refresh = request.args.get("refresh") == "1"
+def api_revenue_structure(stock: str = "600519", years: str = "8", refresh: str = ""):
+    stock = stock.strip() or "600519"
+    years_param = years
+    should_refresh = refresh == "1"
 
     try:
         years = normalize_years(years_param, default=8)
 
-        if not refresh:
+        if not should_refresh:
             cached_payload = load_cached_payload("revenue_structure_v1", stock, years)
             if cached_payload is not None:
-                return jsonify(cached_payload)
+                return cached_payload
 
         payload = get_revenue_structure_payload(stock=stock, years=years)
         save_cached_payload(payload, "revenue_structure_v1", stock, years)
-        return jsonify(payload)
+        return payload
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "years": years_param},
+            status_code=400,
+        )
 
 
 @app.get("/api/profit-market-cap")
-def api_profit_market_cap():
-    stock = request.args.get("stock", "600519").strip() or "600519"
-    years_param = request.args.get("years", "8")
-    refresh = request.args.get("refresh") == "1"
+def api_profit_market_cap(stock: str = "600519", years: str = "8", refresh: str = ""):
+    stock = stock.strip() or "600519"
+    years_param = years
+    should_refresh = refresh == "1"
 
     try:
         years = normalize_years(years_param, default=8)
 
-        if not refresh:
+        if not should_refresh:
             cached_payload = load_cached_payload("profit_market_cap_v1", stock, years)
             if cached_payload is not None:
-                return jsonify(cached_payload)
+                return cached_payload
 
         payload = get_profit_market_cap_payload(stock=stock, years=years)
         save_cached_payload(payload, "profit_market_cap_v1", stock, years)
-        return jsonify(payload)
+        return payload
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return jsonify({"error": str(exc), "stock": stock, "years": years_param}), 400
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "years": years_param},
+            status_code=400,
+        )
 
 
 @app.post("/api/ai-analysis")
-def api_ai_analysis():
-    payload = request.get_json(silent=True) or {}
-
+def api_ai_analysis(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
     stock = str(payload.get("stock", "600519")).strip() or "600519"
     period = payload.get("period")
     years_param = str(payload.get("years", "8")).strip() or "8"
@@ -2047,26 +2070,23 @@ def api_ai_analysis():
             years=years,
             company_material=company_material or None,
         )
-        return jsonify(result)
+        return result
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return (
-            jsonify(
-                {
-                    "error": str(exc),
-                    "stock": stock,
-                    "period": period,
-                    "years": years_param,
-                }
-            ),
-            400,
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "stock": stock,
+                "period": period,
+                "years": years_param,
+            },
+            status_code=400,
         )
 
 
 @app.post("/api/business-type-analysis")
-def api_business_type_analysis():
-    payload = request.get_json(silent=True) or {}
-
+def api_business_type_analysis(payload: dict[str, Any] | None = Body(default=None)):
+    payload = payload or {}
     stock = str(payload.get("stock", "600519")).strip() or "600519"
     period = payload.get("period")
     years_param = str(payload.get("years", "8")).strip() or "8"
@@ -2083,19 +2103,17 @@ def api_business_type_analysis():
             years=years,
             company_material=company_material,
         )
-        return jsonify(result)
+        return result
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        return (
-            jsonify(
-                {
-                    "error": str(exc),
-                    "stock": stock,
-                    "period": period,
-                    "years": years_param,
-                }
-            ),
-            400,
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "stock": stock,
+                "period": period,
+                "years": years_param,
+            },
+            status_code=400,
         )
 
 
@@ -2112,62 +2130,61 @@ def api_health():
         "aiAnalysis": "POST /api/ai-analysis",
         "businessTypeAnalysis": "POST /api/business-type-analysis",
     }
-    return jsonify(
-        {
-            "status": "ok",
-            "service": "ValueCompass backend",
-            "startedAt": APP_STARTED_AT.isoformat(),
-            "now": now.isoformat(),
-            "uptimeSeconds": round((now - APP_STARTED_AT).total_seconds(), 3),
-            "pythonVersion": sys.version.split()[0],
-            "cache": cache_overview,
-            "availableEndpoints": endpoints,
-        }
-    )
+    return {
+        "status": "ok",
+        "service": "ValueCompass backend",
+        "startedAt": APP_STARTED_AT.isoformat(),
+        "now": now.isoformat(),
+        "uptimeSeconds": round((now - APP_STARTED_AT).total_seconds(), 3),
+        "pythonVersion": sys.version.split()[0],
+        "cache": cache_overview,
+        "availableEndpoints": endpoints,
+    }
 
 
 @app.get("/api/cache/stats")
-def api_cache_stats():
-    limit = request.args.get("limit", "10").strip() or "10"
+def api_cache_stats(limit: str = "10"):
+    limit = limit.strip() or "10"
     try:
         recent_limit = max(1, min(int(limit), 50))
     except ValueError:
-        return jsonify({"error": "limit must be an integer between 1 and 50."}), 400
+        return JSONResponse(
+            {"error": "limit must be an integer between 1 and 50."},
+            status_code=400,
+        )
 
-    return jsonify(
-        {
-            "status": "ok",
-            "cache": get_cache_overview(),
-            "recentFiles": list_recent_cache_files(limit=recent_limit),
-        }
-    )
+    return {
+        "status": "ok",
+        "cache": get_cache_overview(),
+        "recentFiles": list_recent_cache_files(limit=recent_limit),
+    }
 
 
 @app.get("/")
-@app.get("/<path:path>")
+@app.get("/{path:path}")
 def serve_frontend(path: str = ""):
     if path.startswith("api/"):
-        abort(404)
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
 
-    requested_file = FRONTEND_OUT_DIR / path
-    if path and requested_file.is_file():
-        return send_from_directory(FRONTEND_OUT_DIR, path)
+    requested_file = get_frontend_file(path) if path else None
+    if requested_file is not None:
+        return FileResponse(requested_file)
 
     index_file = FRONTEND_OUT_DIR / "index.html"
     if index_file.is_file():
-        return send_from_directory(FRONTEND_OUT_DIR, "index.html")
+        return FileResponse(index_file)
 
-    return (
-        jsonify(
-            {
-                "message": "Frontend has not been built yet. Run `npm run build` in frontend first.",
-                "healthApi": "/api/health",
-                "cacheStatsApi": "/api/cache/stats?limit=10",
-            }
-        ),
-        503,
+    return JSONResponse(
+        {
+            "message": "Frontend has not been built yet. Run `npm run build` in frontend first.",
+            "healthApi": "/api/health",
+            "cacheStatsApi": "/api/cache/stats?limit=10",
+        },
+        status_code=503,
     )
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=5001)
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=5001)
