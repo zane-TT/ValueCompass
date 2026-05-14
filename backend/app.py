@@ -15,7 +15,7 @@ import akshare.stock_feature.stock_disclosure_cninfo as disclosure_cninfo
 import httpx
 import pandas as pd
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, abort, jsonify, request, send_from_directory
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -41,6 +41,7 @@ CORS(
 YI = 100000000
 BASE_DIR = Path(__file__).resolve().parent
 CACHE_DIR = BASE_DIR / "cache"
+FRONTEND_OUT_DIR = BASE_DIR.parent / "frontend" / "out"
 load_dotenv(BASE_DIR / ".env")
 DEFAULT_OPENAI_BASE_URL = "https://api.openai-proxy.org/v1"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-nano-2026-03-17"
@@ -2143,20 +2144,28 @@ def api_cache_stats():
 
 
 @app.get("/")
-def health_message():
-    return jsonify(
-        {
-            "message": "Flask API is running. Use the Next frontend for the UI.",
-            "healthApi": "/api/health",
-            "cacheStatsApi": "/api/cache/stats?limit=10",
-            "balanceApi": "/api/balance?stock=600519",
-            "trendApi": "/api/revenue-market-cap?stock=000333&years=8",
-            "revenueStructureApi": "/api/revenue-structure?stock=600519&years=8",
-            "profitTrendApi": "/api/profit-market-cap?stock=600519&years=8",
-            "peApi": "/api/pe-trend?stock=600519&years=8",
-            "aiAnalysisApi": "POST /api/ai-analysis",
-            "businessTypeAnalysisApi": "POST /api/business-type-analysis",
-        }
+@app.get("/<path:path>")
+def serve_frontend(path: str = ""):
+    if path.startswith("api/"):
+        abort(404)
+
+    requested_file = FRONTEND_OUT_DIR / path
+    if path and requested_file.is_file():
+        return send_from_directory(FRONTEND_OUT_DIR, path)
+
+    index_file = FRONTEND_OUT_DIR / "index.html"
+    if index_file.is_file():
+        return send_from_directory(FRONTEND_OUT_DIR, "index.html")
+
+    return (
+        jsonify(
+            {
+                "message": "Frontend has not been built yet. Run `npm run build` in frontend first.",
+                "healthApi": "/api/health",
+                "cacheStatsApi": "/api/cache/stats?limit=10",
+            }
+        ),
+        503,
     )
 
 

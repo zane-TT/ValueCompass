@@ -213,7 +213,9 @@ const STOCK_PRESETS = [
   { code: "300052", label: "中青宝" },
 ];
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:5001";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ??
+  (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
 
 const BALANCE_TERM_HELP: Record<string, BalanceHelp> = {
   "asset:现金": {
