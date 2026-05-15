@@ -1116,18 +1116,6 @@ export default function HomePage() {
 
     const xMin = allDates[0];
     const xMax = allDates[allDates.length - 1];
-    const baseMarketCap = profitData.marketCapLine.find((item) => item.value > 0)?.value ?? 0;
-    const baseProfit = profitData.profitBars.find((item) => Math.abs(item.value) > 0)?.value ?? 0;
-    const profitIndexBars = profitData.profitBars.map((item) => ({
-      date: item.date,
-      value: baseProfit !== 0 ? Number(((item.value / Math.abs(baseProfit)) * 100).toFixed(2)) : 0,
-      rawProfit: item.value,
-    }));
-    const marketCapIndexLine = profitData.marketCapLine.map((item) => ({
-      date: item.date,
-      value: baseMarketCap > 0 ? Number(((item.value / baseMarketCap) * 100).toFixed(2)) : 0,
-      rawMarketCap: item.value,
-    }));
 
     profitChart.current.clear();
     profitChart.current.setOption(
@@ -1135,20 +1123,16 @@ export default function HomePage() {
         animationDuration: 400,
         tooltip: {
           trigger: "axis",
-          formatter(params: Array<{ seriesName: string; marker: string; data?: [string, number, number?, number?] }>) {
+          formatter(params: Array<{ seriesName: string; marker: string; data?: [string, number] }>) {
             const lines = params.map((param) => {
               const data = param.data ?? ["", 0];
-              if (param.seriesName === "归母净利润指数") {
-                const rawProfit = data[2];
-                return `${param.marker}${param.seriesName}: ${data[1]}%（净利润 ${rawProfit ?? "-"} 亿）`;
-              }
-              return `${param.marker}${param.seriesName}: ${data[1]}%（市值 ${data[2] ?? "-"} 亿）`;
+              return `${param.marker}${param.seriesName}: ${data[1]} 亿`;
             });
             return lines.join("<br/>");
           },
         },
-        legend: { top: 8, data: ["归母净利润指数", "总市值指数"] },
-        grid: { top: 56, left: 72, right: 36, bottom: 44, containLabel: true },
+        legend: { top: 8, data: ["归母净利润", "总市值"] },
+        grid: { top: 56, left: 64, right: 64, bottom: 44, containLabel: true },
         xAxis: {
           type: "time",
           min: Number.isFinite(xMin) ? xMin : undefined,
@@ -1161,32 +1145,44 @@ export default function HomePage() {
             },
           },
         },
-        yAxis: {
-          type: "value",
-          name: "首期=100",
-          axisLabel: {
-            formatter: (value: number) => `${value}%`,
+        yAxis: [
+          {
+            type: "value",
+            name: "归母净利润(亿)",
+            axisLabel: { color: "#3f5fe8" },
+            nameTextStyle: { color: "#3f5fe8" },
+            splitLine: { lineStyle: { color: "#e8edf5" } },
           },
-          splitLine: { lineStyle: { color: "#e8edf5" } },
-        },
+          {
+            type: "value",
+            name: "总市值(亿)",
+            axisLabel: { color: "#64748b" },
+            nameTextStyle: { color: "#64748b" },
+            axisLine: { show: false },
+            axisTick: { show: false },
+            splitLine: { show: false },
+          },
+        ],
         series: [
           {
-            name: "归母净利润指数",
+            name: "归母净利润",
             type: "bar",
+            yAxisIndex: 0,
             barMaxWidth: 22,
             label: { show: false },
             itemStyle: { color: "#4e79ff" },
-            data: profitIndexBars.map((item) => [item.date, item.value, item.rawProfit]),
+            data: profitData.profitBars.map((item) => [item.date, item.value]),
           },
           {
-            name: "总市值指数",
+            name: "总市值",
             type: "line",
+            yAxisIndex: 1,
             showSymbol: false,
             smooth: true,
             label: { show: false },
             itemStyle: { color: "#e05555" },
             lineStyle: { color: "#e05555", width: 2 },
-            data: marketCapIndexLine.map((item) => [item.date, item.value, item.rawMarketCap]),
+            data: profitData.marketCapLine.map((item) => [item.date, item.value]),
           },
         ],
       },
