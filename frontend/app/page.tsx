@@ -200,6 +200,9 @@ type QueryState = {
   years: string;
 };
 
+type AnalysisPreset = "overview" | "profit" | "cashflow" | "balance" | "business" | "valuation" | "ai" | "custom";
+type ChartId = "revenue" | "profit" | "cashflow" | "balance" | "pe";
+
 type HealthResponse = {
   status: string;
   service: string;
@@ -240,6 +243,25 @@ const STOCK_PRESETS = [
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ??
   (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
+
+const ANALYSIS_PRESETS: Array<{ id: AnalysisPreset; label: string; description: string; charts: ChartId[] }> = [
+  { id: "overview", label: "总览", description: "常用图表一起看", charts: ["revenue", "profit", "cashflow", "pe"] },
+  { id: "profit", label: "盈利", description: "收入、利润和市值", charts: ["revenue", "profit"] },
+  { id: "cashflow", label: "现金流", description: "利润是否变成现金", charts: ["cashflow", "profit"] },
+  { id: "balance", label: "资产结构", description: "资产和负债构成", charts: ["balance", "cashflow"] },
+  { id: "business", label: "业务", description: "公司靠什么赚钱", charts: ["revenue", "profit"] },
+  { id: "valuation", label: "估值", description: "市盈率位置", charts: ["pe", "profit"] },
+  { id: "ai", label: "AI/系统", description: "综合分析和运行状态", charts: ["cashflow", "pe"] },
+  { id: "custom", label: "自定义", description: "手动选择图表", charts: [] },
+];
+
+const CHART_OPTIONS: Array<{ id: ChartId; label: string; description: string }> = [
+  { id: "revenue", label: "营收与市值", description: "收入规模和市值走势" },
+  { id: "profit", label: "净利润与市值", description: "盈利能力和市场定价" },
+  { id: "cashflow", label: "现金流与盈利质量", description: "利润是否转化为现金" },
+  { id: "balance", label: "资产负债结构", description: "资产和负债构成" },
+  { id: "pe", label: "市盈率趋势", description: "估值所处区间" },
+];
 
 const BALANCE_TERM_HELP: Record<string, BalanceHelp> = {
   "asset:现金": {
@@ -697,6 +719,8 @@ export default function HomePage() {
   const [stock, setStock] = useState("600519");
   const [period, setPeriod] = useState("");
   const [years, setYears] = useState("8");
+  const [activePreset, setActivePreset] = useState<AnalysisPreset>("overview");
+  const [selectedCharts, setSelectedCharts] = useState<ChartId[]>(["revenue", "profit", "cashflow", "pe"]);
 
   const [balanceStatus, setBalanceStatus] = useState("正在加载资产负债数据...");
   const [trendStatus, setTrendStatus] = useState("正在加载业绩与市值数据...");
@@ -809,6 +833,43 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (!selectedCharts.includes("balance")) {
+      balanceChart.current?.dispose();
+      balanceChart.current = null;
+    }
+    if (!selectedCharts.includes("revenue")) {
+      trendChart.current?.dispose();
+      trendChart.current = null;
+    }
+    if (!selectedCharts.includes("pe")) {
+      peChart.current?.dispose();
+      peChart.current = null;
+    }
+    if (!selectedCharts.includes("profit")) {
+      profitChart.current?.dispose();
+      profitChart.current = null;
+    }
+    if (!selectedCharts.includes("cashflow")) {
+      cashFlowChart.current?.dispose();
+      cashFlowChart.current = null;
+    }
+
+    if (selectedCharts.includes("balance")) ensureChart(balanceChartRef, balanceChart);
+    if (selectedCharts.includes("revenue")) ensureChart(trendChartRef, trendChart);
+    if (selectedCharts.includes("pe")) ensureChart(peChartRef, peChart);
+    if (selectedCharts.includes("profit")) ensureChart(profitChartRef, profitChart);
+    if (selectedCharts.includes("cashflow")) ensureChart(cashFlowChartRef, cashFlowChart);
+
+    requestAnimationFrame(() => {
+      balanceChart.current?.resize();
+      trendChart.current?.resize();
+      peChart.current?.resize();
+      profitChart.current?.resize();
+      cashFlowChart.current?.resize();
+    });
+  }, [activePreset, selectedCharts]);
+
+  useEffect(() => {
     if (!balanceData || !balanceChart.current) return;
 
     const totalAssets = balanceData.barData.reduce((sum, item) => {
@@ -900,7 +961,7 @@ export default function HomePage() {
     );
 
     requestAnimationFrame(() => balanceChart.current?.resize());
-  }, [balanceData]);
+  }, [balanceData, selectedCharts]);
 
   useEffect(() => {
     if (!trendData || !trendChart.current) return;
@@ -963,7 +1024,7 @@ export default function HomePage() {
     );
 
     requestAnimationFrame(() => trendChart.current?.resize());
-  }, [trendData]);
+  }, [trendData, selectedCharts]);
 
   useEffect(() => {
     if (!peData || !peChart.current) return;
@@ -1033,7 +1094,7 @@ export default function HomePage() {
     );
 
     requestAnimationFrame(() => peChart.current?.resize());
-  }, [peData]);
+  }, [peData, selectedCharts]);
 
   useEffect(() => {
     if (!profitData || !profitChart.current) return;
@@ -1096,7 +1157,7 @@ export default function HomePage() {
     );
 
     requestAnimationFrame(() => profitChart.current?.resize());
-  }, [profitData]);
+  }, [profitData, selectedCharts]);
 
   useEffect(() => {
     if (!cashFlowData || !cashFlowChart.current) return;
@@ -1175,7 +1236,7 @@ export default function HomePage() {
     );
 
     requestAnimationFrame(() => cashFlowChart.current?.resize());
-  }, [cashFlowData]);
+  }, [cashFlowData, selectedCharts]);
 
   async function loadBalanceData(overrides?: Partial<QueryState>) {
     const query = getQueryState(overrides);
@@ -1376,6 +1437,24 @@ export default function HomePage() {
     void loadAllData({ stock: nextStock });
   }
 
+  function applyAnalysisPreset(preset: (typeof ANALYSIS_PRESETS)[number]) {
+    setActivePreset(preset.id);
+    if (preset.charts.length) {
+      setSelectedCharts(preset.charts);
+    }
+  }
+
+  function toggleChart(chartId: ChartId) {
+    setActivePreset("custom");
+    setSelectedCharts((current) => {
+      if (current.includes(chartId)) {
+        return current.length > 1 ? current.filter((item) => item !== chartId) : current;
+      }
+
+      return [...current, chartId];
+    });
+  }
+
   const combinedStatus = formatCombinedStatus([
     balanceStatus,
     trendStatus,
@@ -1387,6 +1466,10 @@ export default function HomePage() {
   const combinedError = [balanceError, trendError, peError, profitError, cashFlowError, revenueStructureError]
     .filter(Boolean)
     .join(" | ");
+  const chartGridClass = `chart-grid custom-chart-grid count-${Math.min(selectedCharts.length, 5)}`;
+  const showOverview = activePreset === "overview";
+  const showBusiness = activePreset === "business";
+  const showAiSystem = activePreset === "ai";
 
   return (
     <main className="page-shell">
@@ -1404,31 +1487,109 @@ export default function HomePage() {
         onPresetSelect={applyStockPreset}
       />
 
-      <AutoConclusionStrip items={autoConclusionItems} />
-
-      <section className="chart-grid" aria-label="核心财务图表">
-        <ChartPanel title={balanceData?.title ?? "资产负债结构图"} chartRef={balanceChartRef} />
-
-        <ChartPanel title={trendData?.title ?? "公司市值与业绩增长趋势"} chartRef={trendChartRef} />
-
-        <ChartPanel title={profitData?.title ?? "净利润与市值对比"} chartRef={profitChartRef}>
-          {profitData?.conclusion ? <div className="status">{profitData.conclusion}</div> : null}
-        </ChartPanel>
-
-        <ChartPanel title={cashFlowData?.title ?? "现金流与盈利质量"} chartRef={cashFlowChartRef}>
-          {cashFlowData?.conclusion ? <div className="status">{cashFlowData.conclusion}</div> : null}
-        </ChartPanel>
-
-        <ChartPanel title={peData?.title ?? "市盈率趋势图"} chartRef={peChartRef}>
-          <div className="status">
-            均值线：{peData?.meanLine ?? "-"}，低估线：{peData?.lowLine ?? "-"}，高估线：
-            {peData?.highLine ?? "-"}
-          </div>
-          {peData?.conclusion ? <div className="status">{peData.conclusion}</div> : null}
-        </ChartPanel>
+      <section className="analysis-tabs" aria-label="分析视图">
+        {ANALYSIS_PRESETS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`analysis-tab ${activePreset === tab.id ? "active" : ""}`}
+            onClick={() => applyAnalysisPreset(tab)}
+          >
+            <span>{tab.label}</span>
+            <small>{tab.description}</small>
+          </button>
+        ))}
       </section>
 
-      <BusinessModelSection
+      <section className="chart-picker" aria-label="图表选择器">
+        <div>
+          <h2>图表工作区</h2>
+          <div className="subtle">选择你想同时比较的图表，当前显示 {selectedCharts.length} 个。</div>
+        </div>
+        <div className="chart-toggle-group">
+          {CHART_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`chart-toggle ${selectedCharts.includes(option.id) ? "active" : ""}`}
+              onClick={() => toggleChart(option.id)}
+              aria-pressed={selectedCharts.includes(option.id)}
+            >
+              <span>{option.label}</span>
+              <small>{option.description}</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className={`analysis-panel ${showOverview ? "active" : ""}`} aria-label="总览">
+        <AutoConclusionStrip items={autoConclusionItems} />
+
+        <div className="overview-grid">
+          <div className="revenue-section-card overview-card">
+            <h4>综合判断</h4>
+            <div className="overview-headline">
+              {autoConclusionItems.map((item) => `${item.label}：${item.value}`).join(" · ")}
+            </div>
+            <div className="subtle">
+              {cashFlowData?.conclusion ||
+                profitData?.conclusion ||
+                "等待财务数据加载完成后生成判断。"}
+            </div>
+          </div>
+
+          <div className="revenue-section-card overview-card">
+            <h4>关键证据</h4>
+            <div className="overview-list">
+              {buildPerformanceInsightPoints(profitData, trendData)
+                .slice(0, 3)
+                .map((item) => (
+                  <div key={item} className="overview-evidence">
+                    {item}
+                  </div>
+                ))}
+              {cashFlowData?.conclusion ? <div className="overview-evidence">{cashFlowData.conclusion}</div> : null}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="chart-workspace" aria-label="已选图表">
+        <div className={chartGridClass}>
+          {selectedCharts.includes("revenue") ? (
+            <ChartPanel key="revenue-chart" title={trendData?.title ?? "公司市值与业绩增长趋势"} chartRef={trendChartRef} />
+          ) : null}
+
+          {selectedCharts.includes("profit") ? (
+            <ChartPanel key="profit-chart" title={profitData?.title ?? "净利润与市值对比"} chartRef={profitChartRef}>
+              {profitData?.conclusion ? <div className="status">{profitData.conclusion}</div> : null}
+            </ChartPanel>
+          ) : null}
+
+          {selectedCharts.includes("cashflow") ? (
+            <ChartPanel key="cashflow-chart" title={cashFlowData?.title ?? "现金流与盈利质量"} chartRef={cashFlowChartRef}>
+              {cashFlowData?.conclusion ? <div className="status">{cashFlowData.conclusion}</div> : null}
+            </ChartPanel>
+          ) : null}
+
+          {selectedCharts.includes("balance") ? (
+            <ChartPanel key="balance-chart" title={balanceData?.title ?? "资产负债结构图"} chartRef={balanceChartRef} />
+          ) : null}
+
+          {selectedCharts.includes("pe") ? (
+            <ChartPanel key="pe-chart" title={peData?.title ?? "市盈率趋势图"} chartRef={peChartRef}>
+              <div className="status">
+                均值线：{peData?.meanLine ?? "-"}，低估线：{peData?.lowLine ?? "-"}，高估线：
+                {peData?.highLine ?? "-"}
+              </div>
+              {peData?.conclusion ? <div className="status">{peData.conclusion}</div> : null}
+            </ChartPanel>
+          ) : null}
+        </div>
+      </section>
+
+      <section className={`analysis-panel ${showBusiness ? "active" : ""}`} aria-label="业务结构">
+        <BusinessModelSection
         title="公司靠什么赚钱"
         description={
           <>
@@ -1571,9 +1732,11 @@ export default function HomePage() {
             </div>
           </div>
         ) : null}
-      </BusinessModelSection>
+        </BusinessModelSection>
+      </section>
 
-      <AiAnalysisSection
+      <section className={`analysis-panel ${showAiSystem ? "active" : ""}`} aria-label="AI 分析和系统状态">
+        <AiAnalysisSection
         status={aiStatus}
         error={aiError}
         action={
@@ -1646,7 +1809,8 @@ export default function HomePage() {
             <div className="subtle">当前还没有读取到缓存文件列表。</div>
           )}
         </div>
-      </SystemStatus>
+        </SystemStatus>
+      </section>
     </main>
   );
 }
