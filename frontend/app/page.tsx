@@ -1480,38 +1480,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="overview-section" aria-label="总览">
-        <AutoConclusionStrip items={autoConclusionItems} />
-
-        <div className="overview-grid">
-          <div className="revenue-section-card overview-card">
-            <h4>综合判断</h4>
-            <div className="overview-headline">
-              {autoConclusionItems.map((item) => `${item.label}：${item.value}`).join(" · ")}
-            </div>
-            <div className="subtle">
-              {cashFlowData?.conclusion ||
-                profitData?.conclusion ||
-                "等待财务数据加载完成后生成判断。"}
-            </div>
-          </div>
-
-          <div className="revenue-section-card overview-card">
-            <h4>关键证据</h4>
-            <div className="overview-list">
-              {buildPerformanceInsightPoints(profitData, trendData)
-                .slice(0, 3)
-                .map((item) => (
-                  <div key={item} className="overview-evidence">
-                    {item}
-                  </div>
-                ))}
-              {cashFlowData?.conclusion ? <div className="overview-evidence">{cashFlowData.conclusion}</div> : null}
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section className="chart-workspace" aria-label="已选图表">
         <div className={chartGridClass}>
           {selectedCharts.includes("revenue") ? (
@@ -1564,6 +1532,37 @@ export default function HomePage() {
         {revenueStructureError ? <div className="error-box">{revenueStructureError}</div> : null}
 
         {revenueStructureData ? (
+          <>
+          <AutoConclusionStrip items={autoConclusionItems} />
+
+          <div className="overview-grid">
+            <div className="revenue-section-card overview-card">
+              <h4>综合判断</h4>
+              <div className="overview-headline">
+                {autoConclusionItems.map((item) => `${item.label}：${item.value}`).join(" · ")}
+              </div>
+              <div className="subtle">
+                {cashFlowData?.conclusion ||
+                  profitData?.conclusion ||
+                  "等待财务数据加载完成后生成判断。"}
+              </div>
+            </div>
+
+            <div className="revenue-section-card overview-card">
+              <h4>关键证据</h4>
+              <div className="overview-list">
+                {buildPerformanceInsightPoints(profitData, trendData)
+                  .slice(0, 3)
+                  .map((item) => (
+                    <div key={item} className="overview-evidence">
+                      {item}
+                    </div>
+                  ))}
+                {cashFlowData?.conclusion ? <div className="overview-evidence">{cashFlowData.conclusion}</div> : null}
+              </div>
+            </div>
+          </div>
+
           <div className="revenue-structure-grid">
             <div className="revenue-summary-card">
               <div className="summary-kicker">核心业务</div>
@@ -1689,6 +1688,7 @@ export default function HomePage() {
               )}
             </div>
           </div>
+          </>
         ) : null}
         </BusinessModelSection>
       </section>

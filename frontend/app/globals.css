@@ -484,6 +484,19 @@ button {
   padding: 20px;
 }
 
+.business-section {
+  margin-top: 18px;
+}
+
+.business-section .auto-strip {
+  margin-top: 0;
+}
+
+.business-section .overview-grid {
+  margin-top: 14px;
+  margin-bottom: 16px;
+}
+
 .section-header {
   display: flex;
   align-items: flex-start;
