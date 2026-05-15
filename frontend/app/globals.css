@@ -257,6 +257,24 @@ button {
   padding-top: 4px;
 }
 
+.loaded-company {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.loaded-company strong {
+  color: var(--text);
+  font-weight: 850;
+}
+
+.loaded-company span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .subtle,
 .section-meta,
 .mini-metric-sub,

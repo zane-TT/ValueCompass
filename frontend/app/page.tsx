@@ -1533,6 +1533,7 @@ export default function HomePage() {
       code: peer.stock,
       label: peer.name,
     })) ?? [];
+  const activeCompanyName = revenueStructureData?.companyName || peerData?.companyName || "";
   const chartGridClass = `chart-grid custom-chart-grid count-${Math.min(selectedCharts.length, 5)}`;
 
   return (
@@ -1541,6 +1542,7 @@ export default function HomePage() {
         stock={stock}
         period={period}
         years={years}
+        activeCompanyName={activeCompanyName}
         presets={peerPresets}
         isLoading={isLoading}
         combinedError={combinedError}
