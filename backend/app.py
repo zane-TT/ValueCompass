@@ -220,6 +220,13 @@ NET_PROFIT_CANDIDATES = [
     "NETPROFIT",
 ]
 
+CASH_FLOW_OPERATE_CANDIDATES = [
+    "NETCASH_OPERATE",
+    "NETCASH_OPERATENOTE",
+    "经营活动产生的现金流量净额",
+    "经营活动产生的现金流量净额(元)",
+]
+
 
 def ensure_cache_dir() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -464,6 +471,16 @@ def load_profit_sheet(stock: str) -> pd.DataFrame:
     return df
 
 
+def load_cash_flow_sheet(stock: str) -> pd.DataFrame:
+    em_symbol = to_em_symbol(stock)
+    print(f"[INFO] Fetching quarterly cash flow sheet, symbol={em_symbol}")
+    with temporary_disable_proxy_env():
+        df = ak.stock_cash_flow_sheet_by_quarterly_em(symbol=em_symbol)
+    print("[DEBUG] Cash flow columns:")
+    print(df.columns.tolist())
+    return df
+
+
 def load_market_cap(stock: str, years: int) -> pd.DataFrame:
     if years <= 1:
         period = "近一年"
@@ -502,6 +519,16 @@ def find_net_profit_column(df: pd.DataFrame) -> str:
     print("[ERROR] Net profit field not matched, available columns:")
     print(df.columns.tolist())
     raise ValueError("利润表中未找到净利润字段，请查看后端打印的 columns")
+
+
+def find_operating_cash_flow_column(df: pd.DataFrame) -> str:
+    for column in CASH_FLOW_OPERATE_CANDIDATES:
+        if column in df.columns:
+            return column
+
+    print("[ERROR] Operating cash flow field not matched, available columns:")
+    print(df.columns.tolist())
+    raise ValueError("现金流量表中未找到经营现金流字段，请查看后端打印的 columns")
 
 
 def build_revenue_bars(df: pd.DataFrame, years: int) -> list[dict]:
@@ -556,6 +583,103 @@ def build_profit_bars(df: pd.DataFrame, years: int) -> list[dict]:
         {"date": row.date.strftime("%Y-%m-%d"), "value": to_yi(row.value)}
         for row in profit_df.itertuples()
     ]
+
+
+def build_cash_flow_bars(df: pd.DataFrame, years: int) -> list[dict]:
+    if df is None or df.empty:
+        raise ValueError("未获取到现金流量表数据")
+
+    cash_flow_column = find_operating_cash_flow_column(df)
+    date_column = "REPORT_DATE" if "REPORT_DATE" in df.columns else "报告期"
+    if date_column not in df.columns:
+        print("[ERROR] Cash flow date field not matched, available columns:")
+        print(df.columns.tolist())
+        raise ValueError("现金流量表中未找到报告期字段，请查看后端打印的 columns")
+
+    cash_flow_df = df[[date_column, cash_flow_column]].copy()
+    cash_flow_df["date"] = pd.to_datetime(cash_flow_df[date_column], errors="coerce")
+    cash_flow_df["value"] = cash_flow_df[cash_flow_column].apply(parse_ak_value)
+    cash_flow_df = cash_flow_df.dropna(subset=["date"]).sort_values("date")
+
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(years=years)
+    cash_flow_df = cash_flow_df[cash_flow_df["date"] >= cutoff]
+    if cash_flow_df.empty:
+        raise ValueError(f"最近 {years} 年没有可用的经营现金流数据")
+
+    return [
+        {"date": row.date.strftime("%Y-%m-%d"), "value": to_yi(row.value)}
+        for row in cash_flow_df.itertuples()
+    ]
+
+
+def build_cash_to_profit_ratio(
+    operating_cash_flow: list[dict], net_profit: list[dict]
+) -> list[dict]:
+    profit_lookup = {item["date"]: item["value"] for item in net_profit}
+    ratio_points: list[dict] = []
+
+    for cash_item in operating_cash_flow:
+        profit_value = profit_lookup.get(cash_item["date"])
+        if profit_value is None or abs(profit_value) < 0.000001:
+            continue
+
+        ratio_points.append(
+            {
+                "date": cash_item["date"],
+                "value": round(cash_item["value"] / profit_value, 2),
+            }
+        )
+
+    return ratio_points
+
+
+def generate_cash_flow_quality_conclusion(
+    operating_cash_flow: list[dict],
+    net_profit: list[dict],
+    cash_to_profit_ratio: list[dict],
+) -> str:
+    if not operating_cash_flow or not net_profit:
+        return "现金流和利润质量需要更多数据后再判断。"
+
+    recent_cash = operating_cash_flow[-4:]
+    recent_ratios = cash_to_profit_ratio[-4:]
+    latest_cash = recent_cash[-1]
+    latest_profit = net_profit[-1]
+    positive_cash_count = sum(1 for item in recent_cash if item["value"] > 0)
+    negative_cash_streak = 0
+    for item in reversed(recent_cash):
+        if item["value"] < 0:
+            negative_cash_streak += 1
+        else:
+            break
+
+    valid_positive_profit_ratios = [
+        item for item in recent_ratios if item["value"] > 0 and math.isfinite(item["value"])
+    ]
+    ratio_above_one_count = sum(1 for item in valid_positive_profit_ratios if item["value"] >= 1)
+    latest_ratio = cash_to_profit_ratio[-1]["value"] if cash_to_profit_ratio else None
+
+    if negative_cash_streak >= 2:
+        return (
+            f"利润质量有压力：经营现金流已连续 {negative_cash_streak} 个报告期为负，"
+            "利润尚未稳定转化为现金。"
+        )
+
+    if latest_profit["value"] > 0 and latest_cash["value"] < 0:
+        return (
+            f"利润质量有压力：最新报告期净利润为 {latest_profit['value']} 亿元，"
+            f"但经营现金流为 {latest_cash['value']} 亿元，需要关注回款和营运资金占用。"
+        )
+
+    if valid_positive_profit_ratios and ratio_above_one_count >= math.ceil(len(valid_positive_profit_ratios) / 2):
+        ratio_text = f"，最新净现比约 {latest_ratio} 倍" if latest_ratio is not None else ""
+        return f"利润质量较好：最近几个报告期经营现金流多数为正，净现比大多高于 1{ratio_text}。"
+
+    if positive_cash_count >= math.ceil(len(recent_cash) / 2):
+        ratio_text = f"，最新净现比约 {latest_ratio} 倍" if latest_ratio is not None else ""
+        return f"利润质量一般：经营现金流整体为正，但现金流对净利润的覆盖还不稳定{ratio_text}。"
+
+    return "利润质量有压力：最近几个报告期经营现金流偏弱，需要继续观察利润是否能转化为现金。"
 
 
 def build_market_cap_line(df: pd.DataFrame, years: int, report_points: list[dict]) -> list[dict]:
@@ -669,6 +793,26 @@ def get_profit_market_cap_payload(stock: str, years: int) -> dict:
         "profitBars": profit_bars,
         "marketCapLine": market_cap_line,
         "conclusion": generate_profit_market_cap_conclusion(profit_bars, market_cap_line),
+    }
+
+
+def get_cash_flow_quality_payload(stock: str, years: int) -> dict:
+    operating_cash_flow = build_cash_flow_bars(load_cash_flow_sheet(stock), years)
+    net_profit = build_profit_bars(load_profit_sheet(stock), years)
+    cash_to_profit_ratio = build_cash_to_profit_ratio(operating_cash_flow, net_profit)
+
+    return {
+        "stock": stock,
+        "title": f"{stock} 现金流与盈利质量",
+        "unit": "亿元",
+        "operatingCashFlow": operating_cash_flow,
+        "netProfit": net_profit,
+        "cashToProfitRatio": cash_to_profit_ratio,
+        "conclusion": generate_cash_flow_quality_conclusion(
+            operating_cash_flow,
+            net_profit,
+            cash_to_profit_ratio,
+        ),
     }
 
 
@@ -820,6 +964,16 @@ def get_profit_market_cap_payload_with_cache(stock: str, years: int) -> dict:
 
     payload = get_profit_market_cap_payload(stock=stock, years=years)
     save_cached_payload(payload, "profit_market_cap_v1", stock, years)
+    return payload
+
+
+def get_cash_flow_quality_payload_with_cache(stock: str, years: int) -> dict:
+    cached_payload = load_cached_payload("cash_flow_quality_v1", stock, years)
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = get_cash_flow_quality_payload(stock=stock, years=years)
+    save_cached_payload(payload, "cash_flow_quality_v1", stock, years)
     return payload
 
 
@@ -1747,6 +1901,7 @@ def build_ai_analysis_context(stock: str, period: str | None, years: int) -> dic
     balance_payload = get_balance_payload_with_cache(stock=stock, period=period)
     revenue_payload = get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
     profit_payload = get_profit_market_cap_payload_with_cache(stock=stock, years=years)
+    cash_flow_payload = get_cash_flow_quality_payload_with_cache(stock=stock, years=years)
     pe_payload = get_pe_trend_payload_with_cache(stock=stock, years=years)
     profile_payload = get_company_profile_payload_with_cache(stock=stock)
     main_business_payload = get_main_business_payload_with_cache(stock=stock)
@@ -1777,6 +1932,12 @@ def build_ai_analysis_context(stock: str, period: str | None, years: int) -> dic
             "conclusion": profit_payload.get("conclusion"),
             "profitBars": sample_series_points(profit_payload.get("profitBars", [])),
             "marketCapLine": sample_series_points(profit_payload.get("marketCapLine", [])),
+        },
+        "cashFlowQuality": {
+            "conclusion": cash_flow_payload.get("conclusion"),
+            "operatingCashFlow": sample_series_points(cash_flow_payload.get("operatingCashFlow", [])),
+            "netProfit": sample_series_points(cash_flow_payload.get("netProfit", [])),
+            "cashToProfitRatio": sample_series_points(cash_flow_payload.get("cashToProfitRatio", [])),
         },
         "peTrend": {
             "conclusion": pe_payload.get("conclusion"),
@@ -2054,6 +2215,31 @@ def api_profit_market_cap(stock: str = "600519", years: str = "8", refresh: str 
         )
 
 
+@app.get("/api/cash-flow-quality")
+def api_cash_flow_quality(stock: str = "600519", years: str = "8", refresh: str = ""):
+    stock = stock.strip() or "600519"
+    years_param = years
+    should_refresh = refresh == "1"
+
+    try:
+        years = normalize_years(years_param, default=8)
+
+        if not should_refresh:
+            cached_payload = load_cached_payload("cash_flow_quality_v1", stock, years)
+            if cached_payload is not None:
+                return cached_payload
+
+        payload = get_cash_flow_quality_payload(stock=stock, years=years)
+        save_cached_payload(payload, "cash_flow_quality_v1", stock, years)
+        return payload
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "years": years_param},
+            status_code=400,
+        )
+
+
 @app.post("/api/ai-analysis")
 def api_ai_analysis(payload: dict[str, Any] | None = Body(default=None)):
     payload = payload or {}
@@ -2126,6 +2312,7 @@ def api_health():
         "revenueMarketCap": "/api/revenue-market-cap?stock=000333&years=8",
         "revenueStructure": "/api/revenue-structure?stock=600519&years=8",
         "profitMarketCap": "/api/profit-market-cap?stock=600519&years=8",
+        "cashFlowQuality": "/api/cash-flow-quality?stock=600519&years=8",
         "peTrend": "/api/pe-trend?stock=600519&years=8",
         "aiAnalysis": "POST /api/ai-analysis",
         "businessTypeAnalysis": "POST /api/business-type-analysis",
