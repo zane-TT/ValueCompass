@@ -227,6 +227,88 @@ CASH_FLOW_OPERATE_CANDIDATES = [
     "经营活动产生的现金流量净额(元)",
 ]
 
+PEER_COMPANY_GROUPS = [
+    {
+        "group": "白酒",
+        "keywords": ["白酒", "酒", "茅台", "五粮液", "泸州老窖", "酱香", "浓香", "清香"],
+        "peers": [
+            {"stock": "600519", "name": "贵州茅台"},
+            {"stock": "000858", "name": "五粮液"},
+            {"stock": "000568", "name": "泸州老窖"},
+            {"stock": "600809", "name": "山西汾酒"},
+            {"stock": "002304", "name": "洋河股份"},
+            {"stock": "000596", "name": "古井贡酒"},
+            {"stock": "603369", "name": "今世缘"},
+            {"stock": "600702", "name": "舍得酒业"},
+        ],
+    },
+    {
+        "group": "家电",
+        "keywords": ["家电", "空调", "冰箱", "洗衣机", "消费电器", "厨房电器", "暖通"],
+        "peers": [
+            {"stock": "000333", "name": "美的集团"},
+            {"stock": "000651", "name": "格力电器"},
+            {"stock": "600690", "name": "海尔智家"},
+            {"stock": "000921", "name": "海信家电"},
+            {"stock": "002032", "name": "苏泊尔"},
+            {"stock": "002508", "name": "老板电器"},
+        ],
+    },
+    {
+        "group": "航运物流",
+        "keywords": ["航运", "海运", "集装箱", "港口", "码头", "船舶", "物流", "货运"],
+        "peers": [
+            {"stock": "601919", "name": "中远海控"},
+            {"stock": "601872", "name": "招商轮船"},
+            {"stock": "600026", "name": "中远海能"},
+            {"stock": "601598", "name": "中国外运"},
+            {"stock": "601866", "name": "中远海发"},
+            {"stock": "001872", "name": "招商港口"},
+        ],
+    },
+    {
+        "group": "游戏软件",
+        "keywords": ["游戏", "手游", "网络游戏", "软件", "互联网", "云服务", "数字娱乐"],
+        "peers": [
+            {"stock": "300052", "name": "中青宝"},
+            {"stock": "002555", "name": "三七互娱"},
+            {"stock": "002624", "name": "完美世界"},
+            {"stock": "300418", "name": "昆仑万维"},
+            {"stock": "300002", "name": "神州泰岳"},
+            {"stock": "300031", "name": "宝通科技"},
+        ],
+    },
+    {
+        "group": "新能源汽车",
+        "keywords": ["汽车", "新能源车", "整车", "乘用车", "商用车", "电动车"],
+        "peers": [
+            {"stock": "002594", "name": "比亚迪"},
+            {"stock": "601633", "name": "长城汽车"},
+            {"stock": "600104", "name": "上汽集团"},
+            {"stock": "000625", "name": "长安汽车"},
+            {"stock": "601238", "name": "广汽集团"},
+        ],
+    },
+    {
+        "group": "银行",
+        "keywords": ["银行", "商业银行", "存款", "贷款", "利息净收入"],
+        "peers": [
+            {"stock": "600036", "name": "招商银行"},
+            {"stock": "601398", "name": "工商银行"},
+            {"stock": "601939", "name": "建设银行"},
+            {"stock": "601288", "name": "农业银行"},
+            {"stock": "000001", "name": "平安银行"},
+        ],
+    },
+]
+
+DEFAULT_PEER_COMPANIES = [
+    {"stock": "600519", "name": "贵州茅台"},
+    {"stock": "000333", "name": "美的集团"},
+    {"stock": "601919", "name": "中远海控"},
+    {"stock": "300052", "name": "中青宝"},
+]
+
 
 def ensure_cache_dir() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1067,6 +1149,111 @@ def get_main_business_payload_with_cache(stock: str) -> dict:
         "items": summary_items,
     }
     save_cached_payload(payload, "main_business_v1", stock)
+    return payload
+
+
+def normalize_stock_code(stock: str) -> str:
+    match = re.search(r"\d{6}", str(stock or ""))
+    return match.group(0) if match else str(stock or "").strip()
+
+
+def compact_company_name(name: object, fallback: str = "") -> str:
+    text = str(name or fallback or "").strip()
+    for suffix in ["股份有限公司", "有限责任公司", "有限公司", "集团股份", "集团"]:
+        text = text.replace(suffix, "")
+    return text[:8] if len(text) > 8 else text
+
+
+def collect_business_text(profile_payload: dict, main_business_payload: dict) -> str:
+    parts = [
+        profile_payload.get("companyName", ""),
+        profile_payload.get("industry", ""),
+        profile_payload.get("mainBusiness", ""),
+        profile_payload.get("businessScope", ""),
+        profile_payload.get("companyIntro", ""),
+    ]
+    for item in main_business_payload.get("items", []):
+        parts.extend(
+            [
+                item.get("itemName", ""),
+                item.get("categoryType", ""),
+            ]
+        )
+    return " ".join(str(part) for part in parts if part)
+
+
+def keyword_hit_count(text: str, keywords: list[str]) -> int:
+    return sum(1 for keyword in keywords if keyword and keyword in text)
+
+
+def build_peer_candidates(stock: str, limit: int) -> dict:
+    normalized_stock = normalize_stock_code(stock)
+    profile_payload = get_company_profile_payload_with_cache(normalized_stock)
+
+    try:
+        main_business_payload = get_main_business_payload_with_cache(normalized_stock)
+    except Exception as exc:
+        print(f"[WARN] Main business data unavailable for peer scoring, stock={normalized_stock}, error={exc}")
+        main_business_payload = {"items": []}
+
+    target_text = collect_business_text(profile_payload, main_business_payload)
+    ranked_groups = sorted(
+        (
+            {
+                "group": group["group"],
+                "keywords": group["keywords"],
+                "peers": group["peers"],
+                "hits": keyword_hit_count(target_text, group["keywords"]),
+            }
+            for group in PEER_COMPANY_GROUPS
+        ),
+        key=lambda item: item["hits"],
+        reverse=True,
+    )
+    selected_group = ranked_groups[0] if ranked_groups and ranked_groups[0]["hits"] > 0 else None
+    seed_peers = selected_group["peers"] if selected_group else DEFAULT_PEER_COMPANIES
+    source = "industry_keyword" if selected_group else "default_watchlist"
+    source_label = selected_group["group"] if selected_group else "常用观察池"
+
+    peers = []
+    for index, peer in enumerate(seed_peers):
+        peer_stock = normalize_stock_code(peer["stock"])
+        if peer_stock == normalized_stock:
+            continue
+
+        keyword_hits = selected_group["hits"] if selected_group else 0
+        score = 50 + min(keyword_hits * 10, 30) + max(0, 12 - index * 2)
+        reasons = [f"命中{source_label}业务关键词"] if selected_group else ["未识别到明确行业，使用常用样本"]
+        if keyword_hits >= 2:
+            reasons.append("主营业务描述相近")
+
+        peers.append(
+            {
+                "stock": peer_stock,
+                "name": peer["name"],
+                "score": min(score, 95),
+                "reasons": reasons,
+                "source": source,
+            }
+        )
+
+    return {
+        "stock": normalized_stock,
+        "companyName": compact_company_name(profile_payload.get("companyName"), normalized_stock),
+        "industry": profile_payload.get("industry", ""),
+        "source": source,
+        "sourceLabel": source_label,
+        "peers": peers[: max(1, limit)],
+    }
+
+
+def get_peer_companies_payload_with_cache(stock: str, limit: int) -> dict:
+    cached_payload = load_cached_payload("peer_companies_v1", stock, limit)
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = build_peer_candidates(stock=stock, limit=limit)
+    save_cached_payload(payload, "peer_companies_v1", stock, limit)
     return payload
 
 
@@ -2240,6 +2427,35 @@ def api_cash_flow_quality(stock: str = "600519", years: str = "8", refresh: str 
         )
 
 
+@app.get("/api/peer-companies")
+def api_peer_companies(stock: str = "600519", limit: str = "6", refresh: str = ""):
+    stock = normalize_stock_code(stock.strip() or "600519")
+    limit_param = limit
+    should_refresh = refresh == "1"
+
+    try:
+        try:
+            normalized_limit = int(limit_param)
+        except ValueError:
+            normalized_limit = 6
+        normalized_limit = max(3, min(normalized_limit, 10))
+
+        if not should_refresh:
+            cached_payload = load_cached_payload("peer_companies_v1", stock, normalized_limit)
+            if cached_payload is not None:
+                return cached_payload
+
+        payload = build_peer_candidates(stock=stock, limit=normalized_limit)
+        save_cached_payload(payload, "peer_companies_v1", stock, normalized_limit)
+        return payload
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "limit": limit_param},
+            status_code=400,
+        )
+
+
 @app.post("/api/ai-analysis")
 def api_ai_analysis(payload: dict[str, Any] | None = Body(default=None)):
     payload = payload or {}
@@ -2313,6 +2529,7 @@ def api_health():
         "revenueStructure": "/api/revenue-structure?stock=600519&years=8",
         "profitMarketCap": "/api/profit-market-cap?stock=600519&years=8",
         "cashFlowQuality": "/api/cash-flow-quality?stock=600519&years=8",
+        "peerCompanies": "/api/peer-companies?stock=600519&limit=6",
         "peTrend": "/api/pe-trend?stock=600519&years=8",
         "aiAnalysis": "POST /api/ai-analysis",
         "businessTypeAnalysis": "POST /api/business-type-analysis",

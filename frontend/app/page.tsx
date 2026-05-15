@@ -232,6 +232,21 @@ type CacheStatsResponse = {
   }>;
 };
 
+type PeerCompaniesResponse = {
+  stock: string;
+  companyName: string;
+  industry: string;
+  source: string;
+  sourceLabel: string;
+  peers: Array<{
+    stock: string;
+    name: string;
+    score: number;
+    reasons: string[];
+    source: string;
+  }>;
+};
+
 const STOCK_PRESETS = [
   { code: "600519", label: "贵州茅台" },
   { code: "000333", label: "美的集团" },
@@ -715,6 +730,7 @@ export default function HomePage() {
   const [profitStatus, setProfitStatus] = useState("正在加载净利润与市值数据...");
   const [cashFlowStatus, setCashFlowStatus] = useState("正在加载现金流质量数据...");
   const [revenueStructureStatus, setRevenueStructureStatus] = useState("正在加载收入结构拆解...");
+  const [peerStatus, setPeerStatus] = useState("正在识别同行竞品...");
 
   const [aiStatus, setAiStatus] = useState("点击“生成 AI 分析”获取综合解读");
 
@@ -724,6 +740,7 @@ export default function HomePage() {
   const [profitError, setProfitError] = useState<string | null>(null);
   const [cashFlowError, setCashFlowError] = useState<string | null>(null);
   const [revenueStructureError, setRevenueStructureError] = useState<string | null>(null);
+  const [peerError, setPeerError] = useState<string | null>(null);
 
   const [aiError, setAiError] = useState<string | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -734,6 +751,7 @@ export default function HomePage() {
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [cashFlowData, setCashFlowData] = useState<CashFlowQualityResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
+  const [peerData, setPeerData] = useState<PeerCompaniesResponse | null>(null);
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
   const [healthData, setHealthData] = useState<HealthResponse | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStatsResponse | null>(null);
@@ -1348,6 +1366,27 @@ export default function HomePage() {
     }
   }
 
+  async function loadPeerCompaniesData(overrides?: Partial<QueryState>) {
+    const query = getQueryState(overrides);
+    setPeerStatus("正在识别同行竞品...");
+    setPeerError(null);
+
+    try {
+      const params = new URLSearchParams({ stock: query.stock, limit: "6" });
+      const response = await fetch(`${API_BASE}/api/peer-companies?${params.toString()}`);
+      const data = (await response.json()) as PeerCompaniesResponse & { error?: string };
+      if (!response.ok) throw new Error(data.error || "同行竞品接口请求失败");
+
+      setPeerData(data);
+      setPeerStatus(data.sourceLabel ? `同行竞品：${data.sourceLabel}` : "同行竞品已加载");
+    } catch (fetchError) {
+      const message = fetchError instanceof Error ? fetchError.message : "加载失败";
+      setPeerData(null);
+      setPeerError(message);
+      setPeerStatus(`同行竞品加载失败：${message}`);
+    }
+  }
+
   async function loadSystemStatus() {
     setHealthError(null);
 
@@ -1386,6 +1425,7 @@ export default function HomePage() {
       loadProfitMarketCapData(query),
       loadCashFlowQualityData(query),
       loadRevenueStructureData(query),
+      loadPeerCompaniesData(query),
       loadSystemStatus(),
     ]);
   }
@@ -1441,10 +1481,17 @@ export default function HomePage() {
     profitStatus,
     cashFlowStatus,
     revenueStructureStatus,
+    peerStatus,
   ]);
-  const combinedError = [balanceError, trendError, peError, profitError, cashFlowError, revenueStructureError]
+  const combinedError = [balanceError, trendError, peError, profitError, cashFlowError, revenueStructureError, peerError]
     .filter(Boolean)
     .join(" | ");
+  const peerPresets =
+    peerData?.peers?.map((peer) => ({
+      code: peer.stock,
+      label: peer.name,
+    })) ?? [];
+  const displayPresets = peerPresets.length ? peerPresets : STOCK_PRESETS;
   const chartGridClass = `chart-grid custom-chart-grid count-${Math.min(selectedCharts.length, 5)}`;
 
   return (
@@ -1453,7 +1500,7 @@ export default function HomePage() {
         stock={stock}
         period={period}
         years={years}
-        presets={STOCK_PRESETS}
+        presets={displayPresets}
         combinedStatus={combinedStatus}
         combinedError={combinedError}
         onStockChange={setStock}
