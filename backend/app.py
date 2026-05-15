@@ -167,6 +167,36 @@ BUSINESS_EXPLANATION_RULES = [
         "businessCategory": "product",
     },
     {
+        "keywords": ["工程及金属索具"],
+        "businessDescription": "这是偏工程场景的金属索具，通常用于吊装、连接、固定和大型设备配套。收入更容易跟基建、能源、桥梁、海工和大型制造项目的开工节奏相关。",
+        "priceDrivers": ["工程项目开工", "大客户订单", "钢材成本", "安全认证要求", "定制化规格", "项目交付周期"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["钢丝绳及钢丝绳索具", "钢丝绳"],
+        "businessDescription": "这类产品更像标准化程度较高的承载和牵引材料，常用于起重、矿山、港口、工程机械等场景。重点看销量、规格结构和原材料成本传导。",
+        "priceDrivers": ["钢材价格", "工业开工率", "起重和矿山需求", "规格结构", "出口订单", "产能利用率"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["合成纤维吊装带索具", "吊装带"],
+        "businessDescription": "这是轻量化、柔性吊装类产品，应用上更看重安全性、耐磨性和对特殊吊装场景的适配。毛利率通常要结合材料成本、认证和定制能力一起看。",
+        "priceDrivers": ["化纤材料成本", "安全认证", "定制化需求", "工业吊装场景", "替代钢制索具需求", "出口需求"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["链条及链条索具", "链条"],
+        "businessDescription": "这是链条连接和承载类产品，单项收入占比不高时，更多用于补齐吊装和索具体系。观察重点是它是否能和主力索具产品形成配套销售。",
+        "priceDrivers": ["配套销售能力", "钢材成本", "设备制造需求", "维修替换需求", "产品规格结构", "客户复购"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["工程及金属索具", "钢丝绳", "索具", "吊装带", "链条", "缆绳"],
+        "businessDescription": "核心是工程吊装、连接和承载类产品销售。它不是普通消费品，更接近工业基础件，收入主要跟下游工程项目、设备制造和基建施工需求相关。",
+        "priceDrivers": ["工程项目需求", "钢材和纤维材料成本", "产品安全认证", "定制化能力", "下游资本开支", "出口订单"],
+        "businessCategory": "product",
+    },
+    {
         "keywords": ["软件", "SaaS", "云服务"],
         "businessDescription": "这块更接近持续服务。公司通过软件许可、订阅或云服务持续向客户交付能力，收入通常来自客户数、续费率和客单价。",
         "priceDrivers": ["客户扩张", "续费率", "ARPU", "产品迭代能力", "行业数字化投入"],
@@ -2395,12 +2425,12 @@ def api_revenue_structure(stock: str = "600519", years: str = "8", refresh: str 
         years = normalize_years(years_param, default=8)
 
         if not should_refresh:
-            cached_payload = load_cached_payload("revenue_structure_v1", stock, years)
+            cached_payload = load_cached_payload("revenue_structure_v2", stock, years)
             if cached_payload is not None:
                 return cached_payload
 
         payload = get_revenue_structure_payload(stock=stock, years=years)
-        save_cached_payload(payload, "revenue_structure_v1", stock, years)
+        save_cached_payload(payload, "revenue_structure_v2", stock, years)
         return payload
     except Exception as exc:
         print(f"[ERROR] {exc}")

@@ -583,15 +583,6 @@ function buildAutoConclusionItems(
   ];
 }
 
-function formatCombinedStatus(statuses: string[]) {
-  const finishedCount = statuses.filter((item) => item.includes("加载完成")).length;
-  if (finishedCount === statuses.length) {
-    return "数据已更新：资产负债、业绩趋势、市盈率、净利润、现金流与收入结构均已加载。";
-  }
-
-  return statuses.join(" | ");
-}
-
 function getCompanyNatureLabel(companyNature?: RevenueStructureResponse["companyPositioning"]["companyNature"]) {
   if (companyNature === "product") return "产品型";
   if (companyNature === "platform") return "平台型";
@@ -1493,15 +1484,6 @@ export default function HomePage() {
     });
   }
 
-  const combinedStatus = formatCombinedStatus([
-    balanceStatus,
-    trendStatus,
-    peStatus,
-    profitStatus,
-    cashFlowStatus,
-    revenueStructureStatus,
-    peerStatus,
-  ]);
   const combinedError = [balanceError, trendError, peError, profitError, cashFlowError, revenueStructureError, peerError]
     .filter(Boolean)
     .join(" | ");
@@ -1519,7 +1501,6 @@ export default function HomePage() {
         period={period}
         years={years}
         presets={peerPresets}
-        combinedStatus={combinedStatus}
         combinedError={combinedError}
         onStockChange={setStock}
         onPeriodChange={setPeriod}

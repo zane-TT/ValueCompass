@@ -5,7 +5,6 @@ type QueryBarProps = {
   period: string;
   years: string;
   presets: Array<{ code: string; label: string }>;
-  combinedStatus: string;
   combinedError: string;
   onStockChange: (value: string) => void;
   onPeriodChange: (value: string) => void;
@@ -58,7 +57,6 @@ export function QueryBar({
   period,
   years,
   presets,
-  combinedStatus,
   combinedError,
   onStockChange,
   onPeriodChange,
@@ -117,7 +115,6 @@ export function QueryBar({
         </div>
       ) : null}
 
-      <div className="status-line">{combinedStatus}</div>
       {combinedError ? <div className="error-box">{combinedError}</div> : null}
     </section>
   );
