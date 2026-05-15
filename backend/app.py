@@ -279,6 +279,18 @@ PEER_COMPANY_GROUPS = [
         ],
     },
     {
+        "group": "金属索具",
+        "keywords": ["索具", "钢丝绳", "金属制品", "吊装", "链条", "缆绳", "钢绞线", "起重", "通用设备"],
+        "peers": [
+            {"stock": "600992", "name": "贵绳股份"},
+            {"stock": "603028", "name": "赛福天"},
+            {"stock": "000890", "name": "法尔胜"},
+            {"stock": "002132", "name": "恒星科技"},
+            {"stock": "603278", "name": "大业股份"},
+            {"stock": "603969", "name": "银龙股份"},
+        ],
+    },
+    {
         "group": "新能源汽车",
         "keywords": ["汽车", "新能源车", "整车", "乘用车", "商用车", "电动车"],
         "peers": [
@@ -1164,26 +1176,45 @@ def compact_company_name(name: object, fallback: str = "") -> str:
     return text[:8] if len(text) > 8 else text
 
 
-def collect_business_text(profile_payload: dict, main_business_payload: dict) -> str:
-    parts = [
+def collect_peer_match_texts(profile_payload: dict, main_business_payload: dict) -> tuple[str, str]:
+    primary_parts = [
         profile_payload.get("companyName", ""),
         profile_payload.get("industry", ""),
         profile_payload.get("mainBusiness", ""),
-        profile_payload.get("businessScope", ""),
-        profile_payload.get("companyIntro", ""),
     ]
     for item in main_business_payload.get("items", []):
-        parts.extend(
+        primary_parts.extend(
             [
                 item.get("itemName", ""),
                 item.get("categoryType", ""),
             ]
         )
-    return " ".join(str(part) for part in parts if part)
+
+    scope_parts = [
+        profile_payload.get("businessScope", ""),
+        profile_payload.get("companyIntro", ""),
+    ]
+    return (
+        " ".join(str(part) for part in primary_parts if part),
+        " ".join(str(part) for part in scope_parts if part),
+    )
 
 
-def keyword_hit_count(text: str, keywords: list[str]) -> int:
-    return sum(1 for keyword in keywords if keyword and keyword in text)
+def score_peer_group(primary_text: str, scope_text: str, keywords: list[str]) -> dict:
+    primary_hits = [keyword for keyword in keywords if keyword and keyword in primary_text]
+    scope_hits = [keyword for keyword in keywords if keyword and keyword in scope_text and keyword not in primary_hits]
+    score = len(primary_hits) * 3 + len(scope_hits)
+
+    # 经营范围经常包含大量边缘业务，单个弱命中不能决定同行归类。
+    if not primary_hits and len(scope_hits) < 2:
+        score = 0
+
+    return {
+        "score": score,
+        "primaryHits": primary_hits,
+        "scopeHits": scope_hits,
+        "hits": primary_hits + scope_hits,
+    }
 
 
 def build_peer_candidates(stock: str, limit: int) -> dict:
@@ -1196,21 +1227,21 @@ def build_peer_candidates(stock: str, limit: int) -> dict:
         print(f"[WARN] Main business data unavailable for peer scoring, stock={normalized_stock}, error={exc}")
         main_business_payload = {"items": []}
 
-    target_text = collect_business_text(profile_payload, main_business_payload)
+    primary_text, scope_text = collect_peer_match_texts(profile_payload, main_business_payload)
     ranked_groups = sorted(
         (
             {
                 "group": group["group"],
                 "keywords": group["keywords"],
                 "peers": group["peers"],
-                "hits": keyword_hit_count(target_text, group["keywords"]),
+                **score_peer_group(primary_text, scope_text, group["keywords"]),
             }
             for group in PEER_COMPANY_GROUPS
         ),
-        key=lambda item: item["hits"],
+        key=lambda item: item["score"],
         reverse=True,
     )
-    selected_group = ranked_groups[0] if ranked_groups and ranked_groups[0]["hits"] > 0 else None
+    selected_group = ranked_groups[0] if ranked_groups and ranked_groups[0]["score"] > 0 else None
     seed_peers = selected_group["peers"] if selected_group else DEFAULT_PEER_COMPANIES
     source = "industry_keyword" if selected_group else "default_watchlist"
     source_label = selected_group["group"] if selected_group else "常用观察池"
@@ -1221,11 +1252,13 @@ def build_peer_candidates(stock: str, limit: int) -> dict:
         if peer_stock == normalized_stock:
             continue
 
-        keyword_hits = selected_group["hits"] if selected_group else 0
+        keyword_hits = len(selected_group["hits"]) if selected_group else 0
         score = 50 + min(keyword_hits * 10, 30) + max(0, 12 - index * 2)
         reasons = [f"命中{source_label}业务关键词"] if selected_group else ["未识别到明确行业，使用常用样本"]
-        if keyword_hits >= 2:
-            reasons.append("主营业务描述相近")
+        if selected_group and selected_group["primaryHits"]:
+            reasons.append("主营业务或主营构成匹配")
+        elif selected_group:
+            reasons.append("经营范围多关键词匹配")
 
         peers.append(
             {
