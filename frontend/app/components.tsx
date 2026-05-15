@@ -5,6 +5,7 @@ type QueryBarProps = {
   period: string;
   years: string;
   presets: Array<{ code: string; label: string }>;
+  isLoading: boolean;
   combinedError: string;
   onStockChange: (value: string) => void;
   onPeriodChange: (value: string) => void;
@@ -57,6 +58,7 @@ export function QueryBar({
   period,
   years,
   presets,
+  isLoading,
   combinedError,
   onStockChange,
   onPeriodChange,
@@ -115,6 +117,7 @@ export function QueryBar({
         </div>
       ) : null}
 
+      {isLoading ? <div className="status-line">正在加载数据...</div> : null}
       {combinedError ? <div className="error-box">{combinedError}</div> : null}
     </section>
   );

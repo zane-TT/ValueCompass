@@ -1487,6 +1487,15 @@ export default function HomePage() {
   const combinedError = [balanceError, trendError, peError, profitError, cashFlowError, revenueStructureError, peerError]
     .filter(Boolean)
     .join(" | ");
+  const isLoading = [
+    balanceStatus,
+    trendStatus,
+    peStatus,
+    profitStatus,
+    cashFlowStatus,
+    revenueStructureStatus,
+    peerStatus,
+  ].some((status) => status.includes("正在"));
   const peerPresets =
     peerData?.peers?.map((peer) => ({
       code: peer.stock,
@@ -1501,6 +1510,7 @@ export default function HomePage() {
         period={period}
         years={years}
         presets={peerPresets}
+        isLoading={isLoading}
         combinedError={combinedError}
         onStockChange={setStock}
         onPeriodChange={setPeriod}
