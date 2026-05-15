@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: valuecompass
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: OPENAI_BASE_URL
+        value: https://api.openai-proxy.org/v1
+      - key: OPENAI_MODEL
+        value: gpt-5.4-nano-2026-03-17
+      - key: OPENAI_TEMPERATURE
+        value: "0.1"
+      - key: OPENAI_API_KEY
+        sync: false
