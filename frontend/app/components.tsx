@@ -101,19 +101,21 @@ export function QueryBar({
         </button>
       </div>
 
-      <div className="preset-row">
-        {presets.map((item) => (
-          <button
-            key={item.code}
-            type="button"
-            className={`preset-button ${stock === item.code ? "active" : ""}`}
-            onClick={() => onPresetSelect(item.code)}
-          >
-            {item.label}
-            <span>{item.code}</span>
-          </button>
-        ))}
-      </div>
+      {presets.length ? (
+        <div className="preset-row">
+          {presets.map((item) => (
+            <button
+              key={item.code}
+              type="button"
+              className={`preset-button ${stock === item.code ? "active" : ""}`}
+              onClick={() => onPresetSelect(item.code)}
+            >
+              {item.label}
+              <span>{item.code}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="status-line">{combinedStatus}</div>
       {combinedError ? <div className="error-box">{combinedError}</div> : null}

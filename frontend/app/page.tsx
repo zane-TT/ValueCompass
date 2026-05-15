@@ -247,13 +247,6 @@ type PeerCompaniesResponse = {
   }>;
 };
 
-const STOCK_PRESETS = [
-  { code: "600519", label: "贵州茅台" },
-  { code: "000333", label: "美的集团" },
-  { code: "601919", label: "中远海控" },
-  { code: "300052", label: "中青宝" },
-];
-
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ??
   (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
@@ -1491,7 +1484,6 @@ export default function HomePage() {
       code: peer.stock,
       label: peer.name,
     })) ?? [];
-  const displayPresets = peerPresets.length ? peerPresets : STOCK_PRESETS;
   const chartGridClass = `chart-grid custom-chart-grid count-${Math.min(selectedCharts.length, 5)}`;
 
   return (
@@ -1500,7 +1492,7 @@ export default function HomePage() {
         stock={stock}
         period={period}
         years={years}
-        presets={displayPresets}
+        presets={peerPresets}
         combinedStatus={combinedStatus}
         combinedError={combinedError}
         onStockChange={setStock}
