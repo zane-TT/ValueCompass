@@ -992,8 +992,21 @@ export default function HomePage() {
           },
         },
         yAxis: [
-          { type: "value", name: trendData.leftAxisName, splitLine: { lineStyle: { color: "#e8edf5" } } },
-          { type: "value", name: trendData.rightAxisName, splitLine: { show: false } },
+          {
+            type: "value",
+            name: trendData.leftAxisName,
+            axisLabel: { color: "#3f5fe8" },
+            nameTextStyle: { color: "#3f5fe8" },
+            splitLine: { lineStyle: { color: "#e8edf5" } },
+          },
+          {
+            type: "value",
+            name: trendData.rightAxisName,
+            axisLabel: { color: "#e05555" },
+            nameTextStyle: { color: "#e05555" },
+            axisLine: { show: true, lineStyle: { color: "#e05555" } },
+            splitLine: { show: false },
+          },
         ],
         series: [
           {
@@ -1125,8 +1138,21 @@ export default function HomePage() {
           },
         },
         yAxis: [
-          { type: "value", name: profitData.leftAxisName, splitLine: { lineStyle: { color: "#e8edf5" } } },
-          { type: "value", name: profitData.rightAxisName, splitLine: { show: false } },
+          {
+            type: "value",
+            name: profitData.leftAxisName,
+            axisLabel: { color: "#3f5fe8" },
+            nameTextStyle: { color: "#3f5fe8" },
+            splitLine: { lineStyle: { color: "#e8edf5" } },
+          },
+          {
+            type: "value",
+            name: profitData.rightAxisName,
+            axisLabel: { color: "#e05555" },
+            nameTextStyle: { color: "#e05555" },
+            axisLine: { show: true, lineStyle: { color: "#e05555" } },
+            splitLine: { show: false },
+          },
         ],
         series: [
           {
@@ -1136,6 +1162,13 @@ export default function HomePage() {
             barMaxWidth: 22,
             label: { show: false },
             itemStyle: { color: "#4e79ff" },
+            markLine: {
+              symbol: "none",
+              silent: true,
+              label: { formatter: "净利润 0 线", color: "#64748b" },
+              lineStyle: { color: "#94a3b8", type: "dashed", width: 1 },
+              data: [{ yAxis: 0 }],
+            },
             data: profitData.profitBars.map((item) => [item.date, item.value]),
           },
           {
