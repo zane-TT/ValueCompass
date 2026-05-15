@@ -202,6 +202,7 @@ type QueryState = {
 
 type LoadAllDataOptions = {
   includePeers?: boolean;
+  syncUrl?: boolean;
 };
 
 type ChartId = "revenue" | "profit" | "cashflow" | "balance" | "pe";
@@ -830,7 +831,8 @@ export default function HomePage() {
     setStock(initialQuery.stock);
     setPeriod(initialQuery.period);
     setYears(initialQuery.years);
-    void loadAllData(initialQuery, { includePeers: searchParams.has("stock") });
+    const hasStockQuery = searchParams.has("stock");
+    void loadAllData(initialQuery, { includePeers: hasStockQuery, syncUrl: hasStockQuery });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1446,6 +1448,7 @@ export default function HomePage() {
   async function loadAllData(overrides?: Partial<QueryState>, options: LoadAllDataOptions = { includePeers: true }) {
     const query = getQueryState(overrides);
     const includePeers = options.includePeers ?? true;
+    const shouldSyncUrl = options.syncUrl ?? true;
     setAiData(null);
     setAiError(null);
     setAiStatus("点击“生成 AI 分析”获取综合解读");
@@ -1455,7 +1458,7 @@ export default function HomePage() {
       setPeerData(null);
       setPeerStatus("");
     }
-    syncUrl(query);
+    if (shouldSyncUrl) syncUrl(query);
 
     await Promise.all([
       loadBalanceData(query),
