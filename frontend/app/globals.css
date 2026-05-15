@@ -315,54 +315,6 @@ button {
   line-height: 1.45;
 }
 
-.analysis-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 18px;
-  padding: 10px;
-  border: 2px solid var(--line);
-  background: rgba(255, 253, 247, 0.92);
-  box-shadow: var(--shadow-small);
-  backdrop-filter: blur(10px);
-}
-
-.analysis-tab {
-  display: grid;
-  gap: 4px;
-  min-height: 58px;
-  padding: 9px 10px;
-  border: 2px solid var(--line);
-  border-radius: var(--radius);
-  background: #fff;
-  box-shadow: 2px 2px 0 var(--ink);
-  text-align: left;
-  cursor: pointer;
-  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
-}
-
-.analysis-tab span {
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: 950;
-}
-
-.analysis-tab small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.25;
-}
-
-.analysis-tab:hover,
-.analysis-tab.active {
-  background: #ccff00;
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0 var(--ink);
-}
-
 .chart-picker {
   display: block;
   margin-top: 18px;
@@ -423,14 +375,6 @@ button {
 .chart-toggle:hover {
   transform: translate(-1px, -1px);
   box-shadow: 4px 4px 0 var(--ink);
-}
-
-.analysis-panel {
-  display: none;
-}
-
-.analysis-panel.active {
-  display: block;
 }
 
 .overview-grid {
@@ -785,7 +729,6 @@ button {
 
   .auto-strip,
   .system-grid,
-  .analysis-tabs,
   .chart-toggle-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -846,7 +789,6 @@ button {
   .query-console,
   .auto-strip,
   .system-grid,
-  .analysis-tabs,
   .chart-toggle-group {
     grid-template-columns: 1fr;
   }

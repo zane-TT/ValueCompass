@@ -200,7 +200,6 @@ type QueryState = {
   years: string;
 };
 
-type AnalysisPreset = "overview" | "profit" | "cashflow" | "balance" | "business" | "valuation" | "ai" | "custom";
 type ChartId = "revenue" | "profit" | "cashflow" | "balance" | "pe";
 
 type HealthResponse = {
@@ -243,17 +242,6 @@ const STOCK_PRESETS = [
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ??
   (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
-
-const ANALYSIS_PRESETS: Array<{ id: AnalysisPreset; label: string; description: string; charts: ChartId[] }> = [
-  { id: "overview", label: "总览", description: "常用图表一起看", charts: ["revenue", "profit", "cashflow", "pe"] },
-  { id: "profit", label: "盈利", description: "收入、利润和市值", charts: ["revenue", "profit"] },
-  { id: "cashflow", label: "现金流", description: "利润是否变成现金", charts: ["cashflow", "profit"] },
-  { id: "balance", label: "资产结构", description: "资产和负债构成", charts: ["balance", "cashflow"] },
-  { id: "business", label: "业务", description: "公司靠什么赚钱", charts: ["revenue", "profit"] },
-  { id: "valuation", label: "估值", description: "市盈率位置", charts: ["pe", "profit"] },
-  { id: "ai", label: "AI/系统", description: "综合分析和运行状态", charts: ["cashflow", "pe"] },
-  { id: "custom", label: "自定义", description: "手动选择图表", charts: [] },
-];
 
 const CHART_OPTIONS: Array<{ id: ChartId; label: string; description: string }> = [
   { id: "revenue", label: "营收与市值", description: "收入规模和市值走势" },
@@ -719,7 +707,6 @@ export default function HomePage() {
   const [stock, setStock] = useState("600519");
   const [period, setPeriod] = useState("");
   const [years, setYears] = useState("8");
-  const [activePreset, setActivePreset] = useState<AnalysisPreset>("overview");
   const [selectedCharts, setSelectedCharts] = useState<ChartId[]>(["revenue", "profit", "cashflow", "pe"]);
 
   const [balanceStatus, setBalanceStatus] = useState("正在加载资产负债数据...");
@@ -867,7 +854,7 @@ export default function HomePage() {
       profitChart.current?.resize();
       cashFlowChart.current?.resize();
     });
-  }, [activePreset, selectedCharts]);
+  }, [selectedCharts]);
 
   useEffect(() => {
     if (!balanceData || !balanceChart.current) return;
@@ -1437,15 +1424,7 @@ export default function HomePage() {
     void loadAllData({ stock: nextStock });
   }
 
-  function applyAnalysisPreset(preset: (typeof ANALYSIS_PRESETS)[number]) {
-    setActivePreset(preset.id);
-    if (preset.charts.length) {
-      setSelectedCharts(preset.charts);
-    }
-  }
-
   function toggleChart(chartId: ChartId) {
-    setActivePreset("custom");
     setSelectedCharts((current) => {
       if (current.includes(chartId)) {
         return current.length > 1 ? current.filter((item) => item !== chartId) : current;
@@ -1467,9 +1446,6 @@ export default function HomePage() {
     .filter(Boolean)
     .join(" | ");
   const chartGridClass = `chart-grid custom-chart-grid count-${Math.min(selectedCharts.length, 5)}`;
-  const showOverview = activePreset === "overview";
-  const showBusiness = activePreset === "business";
-  const showAiSystem = activePreset === "ai";
 
   return (
     <main className="page-shell">
@@ -1486,20 +1462,6 @@ export default function HomePage() {
         onQuery={() => void loadAllData()}
         onPresetSelect={applyStockPreset}
       />
-
-      <section className="analysis-tabs" aria-label="分析视图">
-        {ANALYSIS_PRESETS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`analysis-tab ${activePreset === tab.id ? "active" : ""}`}
-            onClick={() => applyAnalysisPreset(tab)}
-          >
-            <span>{tab.label}</span>
-            <small>{tab.description}</small>
-          </button>
-        ))}
-      </section>
 
       <section className="chart-picker" aria-label="图表选择器">
         <div className="chart-toggle-group">
@@ -1518,7 +1480,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className={`analysis-panel ${showOverview ? "active" : ""}`} aria-label="总览">
+      <section className="overview-section" aria-label="总览">
         <AutoConclusionStrip items={autoConclusionItems} />
 
         <div className="overview-grid">
@@ -1584,7 +1546,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className={`analysis-panel ${showBusiness ? "active" : ""}`} aria-label="业务结构">
+      <section aria-label="业务结构">
         <BusinessModelSection
         title="公司靠什么赚钱"
         description={
@@ -1731,7 +1693,7 @@ export default function HomePage() {
         </BusinessModelSection>
       </section>
 
-      <section className={`analysis-panel ${showAiSystem ? "active" : ""}`} aria-label="AI 分析和系统状态">
+      <section aria-label="AI 分析和系统状态">
         <AiAnalysisSection
         status={aiStatus}
         error={aiError}
