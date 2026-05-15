@@ -1,110 +1,86 @@
 # ValueCompass
 
-ValueCompass 是一个面向 A 股公司的财报分析工作台。它基于 AKShare 获取公开财务数据，通过 Next.js、ECharts 和 FastAPI 将财报指标转成可交互图表，并自动生成业务结构、盈利质量、估值区间和风险提示。
+ValueCompass 是一个面向 A 股公司的财报分析工作台。它把公开财务数据转成可交互图表，帮助用户快速理解一家公司靠什么赚钱、业绩怎么变、利润质量如何，以及市场定价是否和基本面匹配。
 
-项目目标不是替代专业投研系统，而是帮助用户在几分钟内形成对一家公司的第一层判断：它靠什么赚钱、赚得是否稳定、利润是否有现金流支撑，以及市场给它的估值是否和业绩变化匹配。
+## Features
 
-## 为什么做这个项目
+- 营收、市值、净利润、现金流、市盈率等图表分析
+- 按产品、行业、地区、渠道拆解主营业务
+- 现金流与盈利质量判断
+- 资产负债结构可视化
+- 同行竞品推荐
+- OpenAI-compatible 财报综合分析
 
-很多财报数据是公开的，但原始表格不容易直接形成判断。ValueCompass 尝试把“财报科目”翻译成更接近业务理解的问题：
+## Tech Stack
 
-- 公司主要收入来自哪些产品、行业、地区或渠道？
-- 营收、净利润和市值变化是否同步？
-- 利润有没有变成经营现金流？
-- 资产负债结构里有哪些需要重点关注的科目？
-- 这家公司应该和哪些同行放在一起比较？
+- Frontend: Next.js, React, ECharts
+- Backend: FastAPI, AKShare, pandas
+- AI: OpenAI-compatible API
 
-## 核心功能
+## Quick Start
 
-- 多图表工作区：自由选择营收、市值、净利润、现金流、资产负债、市盈率等图表。
-- 公司业务拆解：按产品、行业、地区、渠道理解公司收入来源。
-- 现金流与盈利质量：对比经营现金流、归母净利润和净现比。
-- 净利润与市值对比：观察业绩变化和市场定价是否同步。
-- 资产负债结构：拆解现金、应收、存货、负债等关键科目。
-- 同行竞品推荐：根据主营业务和行业关键词推荐可对比公司。
-- AI 财报分析：接入 OpenAI-compatible API 生成综合解读。
+### Backend
 
-## 技术栈
-
-- Frontend：Next.js、React、ECharts
-- Backend：FastAPI、AKShare、pandas
-- AI：OpenAI-compatible API
-- Data：A 股公开财务数据
-
-## 快速开始
-
-### 生产式单入口启动
-
-先构建前端静态产物，再启动 FastAPI。启动后只需要访问一个地址，FastAPI 会同时返回前端页面、前端静态资源和后端 `/api/*`。
-
-```powershell
-cd D:\github\ValueCompass\frontend
-npm install
-npm run build
-
-cd D:\github\ValueCompass\backend
-D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
-D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
+```bash
+cd backend
+python -m pip install -r requirements.txt
+python app.py
 ```
 
-启动后访问：
+Backend runs at:
 
 ```text
 http://127.0.0.1:5001
 ```
 
-路由说明：
+### Frontend
 
-```text
-/              前端页面
-/_next/...     前端静态资源
-/api/...       后端 API
-/docs          FastAPI 自动接口文档
-```
-
-### 开发模式
-
-开发时可以分开启动，前端支持热更新，后端仍然跑在 `5001`。
-
-后端：
-
-```powershell
-cd D:\github\ValueCompass\backend
-D:\github\ValueCompass\.venv312\Scripts\python.exe -m pip install -r requirements.txt
-D:\github\ValueCompass\.venv312\Scripts\python.exe app.py
-```
-
-前端：
-
-```powershell
-cd D:\github\ValueCompass\frontend
+```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-开发地址：
+Frontend runs at:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-## OpenAI 配置
+### Single-Server Mode
 
-后端通过环境变量读取 OpenAI 配置。可以参考 [backend/.env.example](backend/.env.example)。
+Build the frontend first, then start the backend. FastAPI will serve both the frontend files and `/api/*`.
+
+```bash
+cd frontend
+npm install
+npm run build
+
+cd ../backend
+python -m pip install -r requirements.txt
+python app.py
+```
+
+Open:
 
 ```text
-OPENAI_BASE_URL=https://api.openai-proxy.org/v1
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-5.4-nano-2026-03-17
+http://127.0.0.1:5001
+```
+
+## Environment
+
+Copy `backend/.env.example` and configure your OpenAI-compatible API settings:
+
+```text
+OPENAI_BASE_URL=
+OPENAI_API_KEY=
+OPENAI_MODEL=
 OPENAI_TEMPERATURE=0.1
 ```
 
-说明：
+AI analysis is optional. The financial charts can run without an API key.
 
-- 真实 API key 不应写入仓库。
-- 如果没有配置 `OPENAI_API_KEY`，后端会返回清晰错误信息。
-
-## API 示例
+## API Examples
 
 ```text
 GET /api/revenue-market-cap?stock=600519&years=8
@@ -116,43 +92,14 @@ GET /api/pe-trend?stock=600519&years=8
 POST /api/ai-analysis
 ```
 
-AI 分析请求体：
-
-```json
-{
-  "stock": "600519",
-  "period": null,
-  "years": 8
-}
-```
-
-## 项目结构
+## Project Structure
 
 ```text
-backend/
-  app.py                 FastAPI 后端入口与数据处理逻辑
-  requirements.txt       Python 依赖
-  .env.example           OpenAI 配置示例
-
-frontend/
-  app/page.tsx           主页面和图表逻辑
-  app/components.tsx     页面组件
-  app/globals.css        全局样式
-
-docs/
-  roadmap-next-steps.md  后续路线图
+backend/   FastAPI backend and data processing
+frontend/  Next.js frontend and chart workspace
+docs/      Roadmap and implementation notes
 ```
 
-## Roadmap
+## Disclaimer
 
-近期优先方向见 [docs/roadmap-next-steps.md](docs/roadmap-next-steps.md)：
-
-- 现金流与盈利质量分析
-- 同比 / TTM 业绩摘要
-- 自动风险提示模块
-- 更稳定的同行竞品识别
-- 更清晰的图表工作区交互
-
-## 免责声明
-
-ValueCompass 仅用于学习、研究和数据可视化展示，不构成任何投资建议。财务数据来自公开数据源，可能存在延迟、缺失或口径差异，使用前请自行核验。
+ValueCompass is for learning, research, and data visualization only. It is not investment advice. Financial data may be delayed, incomplete, or inconsistent across sources.
