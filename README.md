@@ -1,32 +1,49 @@
-# ValueCompass
+<p align="center">
+  <h1 align="center">ValueCompass</h1>
+  <p align="center">
+    Turn A-share financial statements into clear, interactive research signals.
+  </p>
+</p>
 
-ValueCompass 是一个面向 A 股公司的财报分析工作台。它把公开财务数据转成可交互图表，帮助用户快速理解一家公司靠什么赚钱、业绩怎么变、利润质量如何，以及市场定价是否和基本面匹配。
+<p align="center">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-15-black?logo=nextdotjs">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi">
+  <img alt="ECharts" src="https://img.shields.io/badge/ECharts-Visualization-AA344D">
+  <img alt="License" src="https://img.shields.io/badge/license-Learning%20Project-blue">
+</p>
 
-ValueCompass is a financial statement analysis workspace for China A-share companies. It turns public financial data into interactive charts, helping users quickly understand how a company makes money, how its performance changes, whether profits are backed by cash flow, and whether market valuation matches fundamentals.
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#api-examples">API</a> ·
+  <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-## 功能 / Features
+ValueCompass is an open-source financial statement analysis workspace for China A-share companies. It helps answer one question faster:
 
-- 营收、市值、净利润、现金流、市盈率等图表分析
-- 按产品、行业、地区、渠道拆解主营业务
-- 现金流与盈利质量判断
-- 资产负债结构可视化
-- 同行竞品推荐
-- OpenAI-compatible 财报综合分析
+> Is this company really making high-quality money?
 
-- Revenue, market cap, net profit, cash flow, and PE trend charts
-- Business breakdown by product, industry, region, and channel
-- Cash flow and earnings quality analysis
-- Balance sheet structure visualization
-- Peer company recommendations
-- OpenAI-compatible financial analysis
+It turns public financial data into interactive charts, business breakdowns, cash-flow quality checks, valuation views, and peer-company comparisons.
 
-## 技术栈 / Tech Stack
+## Features
+
+| Area | Status | Description |
+| --- | --- | --- |
+| Revenue & Market Cap | Available | Compare revenue scale with market valuation. |
+| Net Profit & Market Cap | Available | View earnings and valuation in raw values. |
+| Cash Flow Quality | Available | Compare operating cash flow, net profit, and cash-to-profit ratio. |
+| Balance Sheet Structure | Available | Visualize assets, liabilities, cash, receivables, inventory, and debt. |
+| Business Breakdown | Available | Break down revenue by product, industry, region, and channel. |
+| Peer Companies | Available | Recommend comparable companies from business keywords. |
+| AI Analysis | Optional | Generate financial summaries with an OpenAI-compatible API. |
+
+## Tech Stack
 
 - Frontend: Next.js, React, ECharts
 - Backend: FastAPI, AKShare, pandas
 - AI: OpenAI-compatible API
 
-## 快速开始 / Quick Start
+## Quick Start
 
 ### Backend
 
@@ -36,7 +53,7 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-后端默认运行在 / Backend runs at:
+Backend runs at:
 
 ```text
 http://127.0.0.1:5001
@@ -50,15 +67,13 @@ npm install
 npm run dev
 ```
 
-前端默认运行在 / Frontend runs at:
+Frontend runs at:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-### 单服务模式 / Single-Server Mode
-
-先构建前端，再启动后端。FastAPI 会同时托管前端静态文件和 `/api/*`。
+### Single-Server Mode
 
 Build the frontend first, then start the backend. FastAPI will serve both the frontend files and `/api/*`.
 
@@ -72,15 +87,13 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-打开 / Open:
+Open:
 
 ```text
 http://127.0.0.1:5001
 ```
 
-## 环境变量 / Environment
-
-复制 `backend/.env.example` 并配置 OpenAI-compatible API。
+## Environment
 
 Copy `backend/.env.example` and configure your OpenAI-compatible API settings:
 
@@ -91,11 +104,9 @@ OPENAI_MODEL=
 OPENAI_TEMPERATURE=0.1
 ```
 
-AI 分析是可选功能。没有 API key 时，财务图表仍然可以使用。
-
 AI analysis is optional. The financial charts can run without an API key.
 
-## API 示例 / API Examples
+## API Examples
 
 ```text
 GET /api/revenue-market-cap?stock=600519&years=8
@@ -107,16 +118,14 @@ GET /api/pe-trend?stock=600519&years=8
 POST /api/ai-analysis
 ```
 
-## 项目结构 / Project Structure
+## Project Structure
 
 ```text
-backend/   FastAPI 后端与数据处理 / FastAPI backend and data processing
-frontend/  Next.js 前端与图表工作区 / Next.js frontend and chart workspace
-docs/      路线图与实现笔记 / Roadmap and implementation notes
+backend/   FastAPI backend and data processing
+frontend/  Next.js frontend and chart workspace
+docs/      Roadmap and implementation notes
 ```
 
-## 免责声明 / Disclaimer
-
-ValueCompass 仅用于学习、研究和数据可视化展示，不构成任何投资建议。财务数据可能存在延迟、缺失或口径差异，使用前请自行核验。
+## Disclaimer
 
 ValueCompass is for learning, research, and data visualization only. It is not investment advice. Financial data may be delayed, incomplete, or inconsistent across sources.
