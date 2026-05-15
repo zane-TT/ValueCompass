@@ -247,9 +247,8 @@ type PeerCompaniesResponse = {
   }>;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ??
-  (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
+const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim();
+const API_BASE = configuredApiBase || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
 
 const CHART_OPTIONS: Array<{ id: ChartId; label: string; description: string }> = [
   { id: "revenue", label: "营收与市值", description: "收入规模和市值走势" },
@@ -700,6 +699,15 @@ function readQueryState(searchParams: URLSearchParams): QueryState {
     period: searchParams.get("period")?.trim() || "",
     years: searchParams.get("years")?.trim() || "8",
   };
+}
+
+async function parseApiJson<T>(response: Response, fallbackMessage: string): Promise<T & { error?: string }> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(`${fallbackMessage}：后端没有返回 JSON，请确认 API 服务地址为 ${API_BASE || "同源 /api"}`);
+  }
+
+  return (await response.json()) as T & { error?: string };
 }
 
 export default function HomePage() {
@@ -1282,7 +1290,7 @@ export default function HomePage() {
       if (query.period) params.set("period", query.period);
 
       const response = await fetch(`${API_BASE}/api/balance?${params.toString()}`);
-      const data = (await response.json()) as BalanceResponse & { error?: string };
+      const data = await parseApiJson<BalanceResponse>(response, "资产负债接口请求失败");
       if (!response.ok) throw new Error(data.error || "资产负债接口请求失败");
 
       setBalanceData(data);
@@ -1302,7 +1310,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/revenue-market-cap?${params.toString()}`);
-      const data = (await response.json()) as TrendResponse & { error?: string };
+      const data = await parseApiJson<TrendResponse>(response, "业绩与市值接口请求失败");
       if (!response.ok) throw new Error(data.error || "业绩与市值接口请求失败");
 
       setTrendData(data);
@@ -1322,7 +1330,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/pe-trend?${params.toString()}`);
-      const data = (await response.json()) as PeTrendResponse & { error?: string };
+      const data = await parseApiJson<PeTrendResponse>(response, "市盈率接口请求失败");
       if (!response.ok) throw new Error(data.error || "市盈率接口请求失败");
 
       setPeData(data);
@@ -1342,7 +1350,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/profit-market-cap?${params.toString()}`);
-      const data = (await response.json()) as ProfitMarketCapResponse & { error?: string };
+      const data = await parseApiJson<ProfitMarketCapResponse>(response, "净利润与市值接口请求失败");
       if (!response.ok) throw new Error(data.error || "净利润与市值接口请求失败");
 
       setProfitData(data);
@@ -1362,7 +1370,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/cash-flow-quality?${params.toString()}`);
-      const data = (await response.json()) as CashFlowQualityResponse & { error?: string };
+      const data = await parseApiJson<CashFlowQualityResponse>(response, "现金流质量接口请求失败");
       if (!response.ok) throw new Error(data.error || "现金流质量接口请求失败");
 
       setCashFlowData(data);
@@ -1383,7 +1391,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ stock: query.stock, years: query.years });
       const response = await fetch(`${API_BASE}/api/revenue-structure?${params.toString()}`);
-      const data = (await response.json()) as RevenueStructureResponse & { error?: string };
+      const data = await parseApiJson<RevenueStructureResponse>(response, "收入结构接口请求失败");
       if (!response.ok) throw new Error(data.error || "收入结构接口请求失败");
 
       setRevenueStructureData(data);
@@ -1403,7 +1411,7 @@ export default function HomePage() {
     try {
       const params = new URLSearchParams({ stock: query.stock, limit: "6" });
       const response = await fetch(`${API_BASE}/api/peer-companies?${params.toString()}`);
-      const data = (await response.json()) as PeerCompaniesResponse & { error?: string };
+      const data = await parseApiJson<PeerCompaniesResponse>(response, "同行竞品接口请求失败");
       if (!response.ok) throw new Error(data.error || "同行竞品接口请求失败");
 
       setPeerData(data);
@@ -1425,8 +1433,8 @@ export default function HomePage() {
         fetch(`${API_BASE}/api/cache/stats?limit=5`),
       ]);
 
-      const healthPayload = (await healthResponse.json()) as HealthResponse & { error?: string };
-      const cachePayload = (await cacheResponse.json()) as CacheStatsResponse & { error?: string };
+      const healthPayload = await parseApiJson<HealthResponse>(healthResponse, "健康检查请求失败");
+      const cachePayload = await parseApiJson<CacheStatsResponse>(cacheResponse, "缓存统计请求失败");
 
       if (!healthResponse.ok) throw new Error(healthPayload.error || "健康检查请求失败");
       if (!cacheResponse.ok) throw new Error(cachePayload.error || "缓存统计请求失败");
@@ -1476,7 +1484,7 @@ export default function HomePage() {
         }),
       });
 
-      const data = (await response.json()) as AiAnalysisResponse & { error?: string };
+      const data = await parseApiJson<AiAnalysisResponse>(response, "AI 分析接口请求失败");
       if (!response.ok) throw new Error(data.error || "AI 分析接口请求失败");
 
       setAiData(data);
