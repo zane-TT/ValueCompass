@@ -364,23 +364,12 @@ button {
 }
 
 .chart-picker {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.55fr) minmax(520px, 1.45fr);
-  gap: 16px;
-  align-items: start;
+  display: block;
   margin-top: 18px;
-  padding: 16px;
+  padding: 10px;
   border: 2px solid var(--line);
   background: var(--paper);
-  box-shadow: var(--shadow-hard);
-}
-
-.chart-picker h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(24px, 2.8vw, 38px);
-  font-weight: 950;
-  letter-spacing: -0.045em;
+  box-shadow: var(--shadow-small);
 }
 
 .chart-toggle-group {
@@ -392,8 +381,8 @@ button {
 .chart-toggle {
   display: grid;
   gap: 5px;
-  min-height: 70px;
-  padding: 10px;
+  min-height: 58px;
+  padding: 8px 10px;
   border: 2px solid var(--line);
   background: #fff;
   box-shadow: 2px 2px 0 var(--ink);
@@ -799,10 +788,6 @@ button {
   .analysis-tabs,
   .chart-toggle-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .chart-picker {
-    grid-template-columns: 1fr;
   }
 }
 

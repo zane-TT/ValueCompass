@@ -1502,10 +1502,6 @@ export default function HomePage() {
       </section>
 
       <section className="chart-picker" aria-label="图表选择器">
-        <div>
-          <h2>图表工作区</h2>
-          <div className="subtle">选择你想同时比较的图表，当前显示 {selectedCharts.length} 个。</div>
-        </div>
         <div className="chart-toggle-group">
           {CHART_OPTIONS.map((option) => (
             <button
