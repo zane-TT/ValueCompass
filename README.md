@@ -16,6 +16,7 @@
   <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#api-examples">API</a> ·
+  <a href="https://valuecompass.onrender.com/">Live Demo</a> ·
   <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
@@ -24,6 +25,8 @@ ValueCompass is an open-source financial statement analysis workspace for China 
 > Is this company really making high-quality money?
 
 It turns public financial data into interactive charts, business breakdowns, cash-flow quality checks, valuation views, and peer-company comparisons.
+
+Live demo: https://valuecompass.onrender.com/
 
 ## Features
 

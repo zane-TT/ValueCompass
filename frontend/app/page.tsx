@@ -200,6 +200,10 @@ type QueryState = {
   years: string;
 };
 
+type LoadAllDataOptions = {
+  includePeers?: boolean;
+};
+
 type ChartId = "revenue" | "profit" | "cashflow" | "balance" | "pe";
 
 type HealthResponse = {
@@ -722,7 +726,7 @@ export default function HomePage() {
   const [profitStatus, setProfitStatus] = useState("正在加载净利润与市值数据...");
   const [cashFlowStatus, setCashFlowStatus] = useState("正在加载现金流质量数据...");
   const [revenueStructureStatus, setRevenueStructureStatus] = useState("正在加载收入结构拆解...");
-  const [peerStatus, setPeerStatus] = useState("正在识别同行竞品...");
+  const [peerStatus, setPeerStatus] = useState("");
 
   const [aiStatus, setAiStatus] = useState("点击“生成 AI 分析”获取综合解读");
 
@@ -821,11 +825,12 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const initialQuery = readQueryState(new URLSearchParams(window.location.search));
+    const searchParams = new URLSearchParams(window.location.search);
+    const initialQuery = readQueryState(searchParams);
     setStock(initialQuery.stock);
     setPeriod(initialQuery.period);
     setYears(initialQuery.years);
-    void loadAllData(initialQuery);
+    void loadAllData(initialQuery, { includePeers: searchParams.has("stock") });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1438,12 +1443,18 @@ export default function HomePage() {
     }
   }
 
-  async function loadAllData(overrides?: Partial<QueryState>) {
+  async function loadAllData(overrides?: Partial<QueryState>, options: LoadAllDataOptions = { includePeers: true }) {
     const query = getQueryState(overrides);
+    const includePeers = options.includePeers ?? true;
     setAiData(null);
     setAiError(null);
     setAiStatus("点击“生成 AI 分析”获取综合解读");
     setRevenueStructureData(null);
+    setPeerError(null);
+    if (!includePeers) {
+      setPeerData(null);
+      setPeerStatus("");
+    }
     syncUrl(query);
 
     await Promise.all([
@@ -1453,7 +1464,7 @@ export default function HomePage() {
       loadProfitMarketCapData(query),
       loadCashFlowQualityData(query),
       loadRevenueStructureData(query),
-      loadPeerCompaniesData(query),
+      ...(includePeers ? [loadPeerCompaniesData(query)] : []),
       loadSystemStatus(),
     ]);
   }
