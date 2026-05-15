@@ -1116,14 +1116,44 @@ export default function HomePage() {
 
     const xMin = allDates[0];
     const xMax = allDates[allDates.length - 1];
+    const marketCapByDate = new Map(profitData.marketCapLine.map((item) => [item.date, item.value]));
+    const baseMarketCap = profitData.marketCapLine.find((item) => item.value > 0)?.value ?? 0;
+    const profitToMarketCapBars = profitData.profitBars.map((item) => {
+      const marketCap = marketCapByDate.get(item.date) ?? 0;
+      return {
+        date: item.date,
+        value: marketCap > 0 ? Number(((item.value / marketCap) * 100).toFixed(3)) : 0,
+        rawProfit: item.value,
+        rawMarketCap: marketCap,
+      };
+    });
+    const marketCapIndexLine = profitData.marketCapLine.map((item) => ({
+      date: item.date,
+      value: baseMarketCap > 0 ? Number(((item.value / baseMarketCap) * 100).toFixed(2)) : 0,
+      rawMarketCap: item.value,
+    }));
 
     profitChart.current.clear();
     profitChart.current.setOption(
       {
         animationDuration: 400,
-        tooltip: { trigger: "axis" },
-        legend: { top: 8, data: ["归母净利润", "总市值"] },
-        grid: { top: 56, left: 64, right: 64, bottom: 44, containLabel: true },
+        tooltip: {
+          trigger: "axis",
+          formatter(params: Array<{ seriesName: string; marker: string; data?: [string, number, number?, number?] }>) {
+            const lines = params.map((param) => {
+              const data = param.data ?? ["", 0];
+              if (param.seriesName === "归母净利润/总市值") {
+                const rawProfit = data[2];
+                const rawMarketCap = data[3];
+                return `${param.marker}${param.seriesName}: ${data[1]}%（净利润 ${rawProfit ?? "-"} 亿 / 市值 ${rawMarketCap ?? "-"} 亿）`;
+              }
+              return `${param.marker}${param.seriesName}: ${data[1]}%（市值 ${data[2] ?? "-"} 亿）`;
+            });
+            return lines.join("<br/>");
+          },
+        },
+        legend: { top: 8, data: ["归母净利润/总市值", "总市值指数"] },
+        grid: { top: 56, left: 72, right: 36, bottom: 44, containLabel: true },
         xAxis: {
           type: "time",
           min: Number.isFinite(xMin) ? xMin : undefined,
@@ -1136,44 +1166,32 @@ export default function HomePage() {
             },
           },
         },
-        yAxis: [
-          {
-            type: "value",
-            name: profitData.leftAxisName,
-            axisLabel: { color: "#3f5fe8" },
-            nameTextStyle: { color: "#3f5fe8" },
-            axisLine: { show: true, lineStyle: { color: "#3f5fe8" } },
-            splitLine: { lineStyle: { color: "#e8edf5" } },
+        yAxis: {
+          type: "value",
+          name: "总市值基准(%)",
+          axisLabel: {
+            formatter: (value: number) => `${value}%`,
           },
-          {
-            type: "value",
-            name: profitData.rightAxisName,
-            axisLabel: { color: "#e05555" },
-            nameTextStyle: { color: "#e05555" },
-            axisLine: { show: true, lineStyle: { color: "#e05555" } },
-            splitLine: { show: false },
-          },
-        ],
+          splitLine: { lineStyle: { color: "#e8edf5" } },
+        },
         series: [
           {
-            name: "归母净利润",
+            name: "归母净利润/总市值",
             type: "bar",
-            yAxisIndex: 0,
             barMaxWidth: 22,
             label: { show: false },
             itemStyle: { color: "#4e79ff" },
-            data: profitData.profitBars.map((item) => [item.date, item.value]),
+            data: profitToMarketCapBars.map((item) => [item.date, item.value, item.rawProfit, item.rawMarketCap]),
           },
           {
-            name: "总市值",
+            name: "总市值指数",
             type: "line",
-            yAxisIndex: 1,
             showSymbol: false,
             smooth: true,
             label: { show: false },
             itemStyle: { color: "#e05555" },
             lineStyle: { color: "#e05555", width: 2 },
-            data: profitData.marketCapLine.map((item) => [item.date, item.value]),
+            data: marketCapIndexLine.map((item) => [item.date, item.value, item.rawMarketCap]),
           },
         ],
       },
