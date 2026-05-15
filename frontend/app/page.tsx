@@ -1116,17 +1116,13 @@ export default function HomePage() {
 
     const xMin = allDates[0];
     const xMax = allDates[allDates.length - 1];
-    const marketCapByDate = new Map(profitData.marketCapLine.map((item) => [item.date, item.value]));
     const baseMarketCap = profitData.marketCapLine.find((item) => item.value > 0)?.value ?? 0;
-    const profitToMarketCapBars = profitData.profitBars.map((item) => {
-      const marketCap = marketCapByDate.get(item.date) ?? 0;
-      return {
-        date: item.date,
-        value: marketCap > 0 ? Number(((item.value / marketCap) * 100).toFixed(3)) : 0,
-        rawProfit: item.value,
-        rawMarketCap: marketCap,
-      };
-    });
+    const baseProfit = profitData.profitBars.find((item) => Math.abs(item.value) > 0)?.value ?? 0;
+    const profitIndexBars = profitData.profitBars.map((item) => ({
+      date: item.date,
+      value: baseProfit !== 0 ? Number(((item.value / Math.abs(baseProfit)) * 100).toFixed(2)) : 0,
+      rawProfit: item.value,
+    }));
     const marketCapIndexLine = profitData.marketCapLine.map((item) => ({
       date: item.date,
       value: baseMarketCap > 0 ? Number(((item.value / baseMarketCap) * 100).toFixed(2)) : 0,
@@ -1142,17 +1138,16 @@ export default function HomePage() {
           formatter(params: Array<{ seriesName: string; marker: string; data?: [string, number, number?, number?] }>) {
             const lines = params.map((param) => {
               const data = param.data ?? ["", 0];
-              if (param.seriesName === "归母净利润/总市值") {
+              if (param.seriesName === "归母净利润指数") {
                 const rawProfit = data[2];
-                const rawMarketCap = data[3];
-                return `${param.marker}${param.seriesName}: ${data[1]}%（净利润 ${rawProfit ?? "-"} 亿 / 市值 ${rawMarketCap ?? "-"} 亿）`;
+                return `${param.marker}${param.seriesName}: ${data[1]}%（净利润 ${rawProfit ?? "-"} 亿）`;
               }
               return `${param.marker}${param.seriesName}: ${data[1]}%（市值 ${data[2] ?? "-"} 亿）`;
             });
             return lines.join("<br/>");
           },
         },
-        legend: { top: 8, data: ["归母净利润/总市值", "总市值指数"] },
+        legend: { top: 8, data: ["归母净利润指数", "总市值指数"] },
         grid: { top: 56, left: 72, right: 36, bottom: 44, containLabel: true },
         xAxis: {
           type: "time",
@@ -1168,7 +1163,7 @@ export default function HomePage() {
         },
         yAxis: {
           type: "value",
-          name: "总市值基准(%)",
+          name: "首期=100",
           axisLabel: {
             formatter: (value: number) => `${value}%`,
           },
@@ -1176,12 +1171,12 @@ export default function HomePage() {
         },
         series: [
           {
-            name: "归母净利润/总市值",
+            name: "归母净利润指数",
             type: "bar",
             barMaxWidth: 22,
             label: { show: false },
             itemStyle: { color: "#4e79ff" },
-            data: profitToMarketCapBars.map((item) => [item.date, item.value, item.rawProfit, item.rawMarketCap]),
+            data: profitIndexBars.map((item) => [item.date, item.value, item.rawProfit]),
           },
           {
             name: "总市值指数",
