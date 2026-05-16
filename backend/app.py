@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
+from urllib.request import ProxyHandler, Request, build_opener
 
 import akshare as ak
 import akshare.stock_feature.stock_disclosure_cninfo as disclosure_cninfo
@@ -395,6 +397,8 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
         "peSource": "multpl",
         "peUrl": "https://www.multpl.com/s-p-500-pe-ratio/table/by-month",
         "priceSymbol": "标普500",
+        "yahooSymbol": "^GSPC",
+        "yahooFallbackSymbols": ["SPY"],
         "sourceLabel": "Multpl S&P 500 PE Ratio (TTM/as-reported) / FRED DGS10",
         "sourceQuality": "S&P 500 PE 为公开历史序列，非 S&P Dow Jones 官方授权数据；适合估值温度判断，不适合做交易级精确口径。",
     },
@@ -403,7 +407,9 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
         "displayName": "纳斯达克100",
         "peSource": "worldperatio",
         "peUrl": "https://worldperatio.com/index/nasdaq-100/",
-        "priceSymbol": "纳斯达克100",
+        "priceSymbol": "纳斯达克",
+        "yahooSymbol": "^NDX",
+        "yahooFallbackSymbols": ["QQQ"],
         "sourceLabel": "World PE Ratio Nasdaq 100 / FRED DGS10",
         "sourceQuality": "Nasdaq 100 PE 为第三方公开网页口径，非 Nasdaq 官方授权数据；当前只用于参考估值分位。",
     },
@@ -716,16 +722,17 @@ def get_cached_payload_or_build(
     return run_singleflight(("payload", prefix, *parts), build_and_save)
 
 
-def get_ak_dataframe_cached(key: tuple[object, ...], builder: Callable[[], pd.DataFrame]) -> pd.DataFrame:
+def get_ak_dataframe_cached(key: tuple[object, ...], builder: Callable[[], pd.DataFrame], refresh: bool = False) -> pd.DataFrame:
     now = time.monotonic()
-    with INFLIGHT_LOCK:
-        cached = AK_DATA_CACHE.get(key)
-        if cached is not None:
-            cached_at, cached_df = cached
-            if now - cached_at < AK_DATA_CACHE_TTL_SECONDS:
-                print(f"[INFO] AK data memory cache hit: {key}")
-                return cached_df.copy()
-            AK_DATA_CACHE.pop(key, None)
+    if not refresh:
+        with INFLIGHT_LOCK:
+            cached = AK_DATA_CACHE.get(key)
+            if cached is not None:
+                cached_at, cached_df = cached
+                if now - cached_at < AK_DATA_CACHE_TTL_SECONDS:
+                    print(f"[INFO] AK data memory cache hit: {key}")
+                    return cached_df.copy()
+                AK_DATA_CACHE.pop(key, None)
 
     df = run_singleflight(("ak-data", *key), builder)
     with INFLIGHT_LOCK:
@@ -3165,7 +3172,7 @@ def parse_trendonify_pe_points(html: str) -> list[dict]:
     return sorted(points, key=lambda item: item["date"])
 
 
-def load_trendonify_pe_points(index_code: str) -> list[dict]:
+def load_trendonify_pe_points(index_code: str, refresh: bool = False) -> list[dict]:
     config = MARKET_INDEX_CONFIG[index_code]
 
     def fetch() -> pd.DataFrame:
@@ -3180,7 +3187,7 @@ def load_trendonify_pe_points(index_code: str) -> list[dict]:
             response.raise_for_status()
         return pd.DataFrame(parse_trendonify_pe_points(response.text))
 
-    df = get_ak_dataframe_cached(("market_index_pe", "trendonify", index_code), fetch)
+    df = get_ak_dataframe_cached(("market_index_pe", "trendonify", index_code), fetch, refresh=refresh)
     if df is None or df.empty:
         return []
     df = df.copy()
@@ -3190,7 +3197,7 @@ def load_trendonify_pe_points(index_code: str) -> list[dict]:
     return sorted(df.to_dict("records"), key=lambda item: item["date"])
 
 
-def load_sp500_pe_points() -> list[dict]:
+def load_sp500_pe_points(refresh: bool = False) -> list[dict]:
     def fetch() -> pd.DataFrame:
         print("[INFO] Fetching S&P 500 PE history from Multpl")
         with temporary_disable_proxy_env():
@@ -3204,7 +3211,7 @@ def load_sp500_pe_points() -> list[dict]:
             tables = pd.read_html(StringIO(response.text))
         return tables[0] if tables else pd.DataFrame()
 
-    df = get_ak_dataframe_cached(("market_index_pe", "sp500"), fetch)
+    df = get_ak_dataframe_cached(("market_index_pe", "sp500"), fetch, refresh=refresh)
     if df is None or df.empty:
         return []
     points = []
@@ -3218,7 +3225,7 @@ def load_sp500_pe_points() -> list[dict]:
     return sorted(points, key=lambda item: item["date"])
 
 
-def load_nasdaq100_pe_points() -> list[dict]:
+def load_nasdaq100_pe_points(refresh: bool = False) -> list[dict]:
     def fetch() -> pd.DataFrame:
         print("[INFO] Fetching Nasdaq 100 PE history from World PE Ratio")
         with temporary_disable_proxy_env():
@@ -3231,7 +3238,7 @@ def load_nasdaq100_pe_points() -> list[dict]:
             response.raise_for_status()
         return pd.DataFrame(parse_worldperatio_points(response.text))
 
-    df = get_ak_dataframe_cached(("market_index_pe", "nasdaq100"), fetch)
+    df = get_ak_dataframe_cached(("market_index_pe", "nasdaq100"), fetch, refresh=refresh)
     if df is None or df.empty:
         return []
     df = df.copy()
@@ -3262,7 +3269,7 @@ print(json.dumps(records, ensure_ascii=False, default=str))
     return sorted(points, key=lambda item: item["date"])
 
 
-def load_csindex_recent_pe_points(symbol: str) -> list[dict]:
+def load_csindex_recent_pe_points(symbol: str, refresh: bool = False) -> list[dict]:
     def fetch() -> pd.DataFrame:
         print(f"[INFO] Fetching CSIndex valuation, symbol={symbol}")
         url = (
@@ -3279,7 +3286,7 @@ def load_csindex_recent_pe_points(symbol: str) -> list[dict]:
             response.raise_for_status()
         return pd.read_excel(BytesIO(response.content))
 
-    df = get_ak_dataframe_cached(("csindex_value", symbol), fetch)
+    df = get_ak_dataframe_cached(("csindex_value", symbol), fetch, refresh=refresh)
     if df is None or df.empty:
         return []
     df = df.copy()
@@ -3297,7 +3304,7 @@ def load_csindex_recent_pe_points(symbol: str) -> list[dict]:
     return sorted(points, key=lambda item: item["date"])
 
 
-def load_etfrun_index_pe_points(market: str, symbol: str) -> list[dict]:
+def load_etfrun_index_pe_points(market: str, symbol: str, refresh: bool = False) -> list[dict]:
     def fetch() -> pd.DataFrame:
         print(f"[INFO] Fetching ETF.run index PE history, market={market}, symbol={symbol}")
         url = f"https://www.etf.run/index/{market}/{symbol}"
@@ -3320,7 +3327,7 @@ def load_etfrun_index_pe_points(market: str, symbol: str) -> list[dict]:
         return pd.DataFrame(values, columns=field_names)
 
     try:
-        df = get_ak_dataframe_cached(("etfrun_index_pe", market, symbol), fetch)
+        df = get_ak_dataframe_cached(("etfrun_index_pe", market, symbol), fetch, refresh=refresh)
     except Exception as exc:
         print(f"[WARN] ETF.run index PE unavailable, market={market}, symbol={symbol}: {exc}")
         return []
@@ -3345,13 +3352,13 @@ def is_market_index_history_sufficient(index_code: str, years: int, pe_points: l
         return False, str(exc)
 
 
-def load_china_index_pe_points(index_code: str, years: int = 5) -> list[dict]:
+def load_china_index_pe_points(index_code: str, years: int = 5, refresh: bool = False) -> list[dict]:
     config = MARKET_INDEX_CONFIG[index_code]
     source_errors: list[str] = []
     etfrun_market = config.get("etfRunMarket")
     etfrun_symbol = config.get("etfRunSymbol")
     if etfrun_market and etfrun_symbol:
-        points = load_etfrun_index_pe_points(etfrun_market, etfrun_symbol)
+        points = load_etfrun_index_pe_points(etfrun_market, etfrun_symbol, refresh=refresh)
         if points:
             is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
             if is_sufficient:
@@ -3361,7 +3368,7 @@ def load_china_index_pe_points(index_code: str, years: int = 5) -> list[dict]:
             source_errors.append("ETF.run: 未返回可用 PE 历史")
 
     if index_code == "dividend_low_vol_100":
-        points = load_csindex_recent_pe_points(config["csindexSymbol"])
+        points = load_csindex_recent_pe_points(config["csindexSymbol"], refresh=refresh)
         is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
         if is_sufficient:
             return points
@@ -3382,7 +3389,7 @@ def load_china_index_pe_points(index_code: str, years: int = 5) -> list[dict]:
     except Exception as exc:
         print(f"[WARN] Legulegu index PE unavailable: {symbol}: {exc}")
         source_errors.append(f"乐咕乐股: {exc}")
-    points = load_csindex_recent_pe_points(config["csindexSymbol"])
+    points = load_csindex_recent_pe_points(config["csindexSymbol"], refresh=refresh)
     is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
     if is_sufficient:
         return points
@@ -3391,71 +3398,265 @@ def load_china_index_pe_points(index_code: str, years: int = 5) -> list[dict]:
 
 
 def load_cached_market_ten_year_yield() -> dict | None:
-    try:
-        for path in sorted(CACHE_DIR.glob("market_index_valuation_v*__*__*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-            with path.open("r", encoding="utf-8") as cache_file:
-                payload = json.load(cache_file)
-            ten_year_yield = payload.get("summary", {}).get("tenYearYield")
-            if isinstance(ten_year_yield, dict) and ten_year_yield.get("value") is not None:
-                ten_year_yield = dict(ten_year_yield)
-                source = str(ten_year_yield.get("source") or "FRED DGS10")
-                ten_year_yield["source"] = source if "cached" in source else f"{source} cached"
-                return ten_year_yield
-    except Exception as exc:
-        print(f"[WARN] Cached US 10Y yield unavailable: {exc}")
+    payload = load_cached_payload("treasury_yield_v1", "us_10y")
+    observations = payload.get("observations") if isinstance(payload, dict) else None
+    if isinstance(observations, list) and observations:
+        latest = observations[-1]
+        if isinstance(latest, dict) and latest.get("value") is not None:
+            return {
+                "date": str(latest.get("date") or ""),
+                "value": round(float(latest["value"]), 2),
+                "unit": "%",
+                "source": str(payload.get("source") or "FRED DGS10"),
+            }
     return None
 
 
-def load_ten_year_yield() -> dict | None:
-    cached_ten_year_yield = load_cached_market_ten_year_yield()
-    if cached_ten_year_yield is not None:
-        return cached_ten_year_yield
-
+def load_ten_year_yield_dataframe(refresh: bool = False) -> pd.DataFrame:
     def fetch() -> pd.DataFrame:
-        print("[INFO] Fetching US 10Y treasury yield from FRED")
-        with temporary_disable_proxy_env():
-            response = requests.get(
-                "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
-                timeout=2.5,
-                headers={"User-Agent": "Mozilla/5.0"},
-                proxies={"http": None, "https": None},
-            )
-            response.raise_for_status()
-            return pd.read_csv(StringIO(response.text))
+        print("[INFO] Fetching US 10Y treasury yield history from FRED")
+        request = Request(
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
+            headers={"User-Agent": "curl/8.0"},
+        )
+        opener = build_opener(ProxyHandler({}))
+        with opener.open(request, timeout=20) as response:
+            return pd.read_csv(BytesIO(response.read()))
 
+    df = get_ak_dataframe_cached(("fred", "DGS10"), fetch, refresh=refresh)
+    if df is None or df.empty or "DGS10" not in df.columns:
+        return pd.DataFrame()
+    df = df.copy()
+    df["date"] = pd.to_datetime(df.get("observation_date"), errors="coerce")
+    df["value"] = pd.to_numeric(df["DGS10"], errors="coerce")
+    df = df.dropna(subset=["date", "value"])
+    return df.sort_values("date")
+
+
+def build_treasury_yield_payload(refresh: bool = False) -> dict:
+    df = load_ten_year_yield_dataframe(refresh=refresh)
+    observations = [
+        {"date": row.date.date().isoformat(), "value": round(float(row.value), 2)}
+        for row in df.itertuples(index=False)
+        if finite_float(row.value) >= 0
+    ]
+    return {
+        "series": "DGS10",
+        "name": "US 10Y Treasury Constant Maturity Rate",
+        "unit": "%",
+        "source": "FRED DGS10",
+        "observations": observations,
+    }
+
+
+def get_treasury_yield_payload_with_cache(refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "treasury_yield_v1",
+        "us_10y",
+        builder=lambda: build_treasury_yield_payload(refresh=refresh),
+        refresh=refresh,
+    )
+
+
+def build_ten_year_yield_bundle(years: int, refresh: bool = False) -> tuple[dict | None, list[dict]]:
     try:
-        df = get_ak_dataframe_cached(("fred", "DGS10"), fetch)
-        if df is None or df.empty or "DGS10" not in df.columns:
-            return None
-        df = df.copy()
-        df["DGS10"] = pd.to_numeric(df["DGS10"], errors="coerce")
-        df = df.dropna(subset=["DGS10"])
+        payload = get_treasury_yield_payload_with_cache(refresh=refresh)
+        observations = payload.get("observations") if isinstance(payload, dict) else None
+        if not isinstance(observations, list) or not observations:
+            return None, []
+        df = pd.DataFrame(observations)
+        df["date"] = pd.to_datetime(df.get("date"), errors="coerce")
+        df["value"] = pd.to_numeric(df.get("value"), errors="coerce")
+        df = df.dropna(subset=["date", "value"]).sort_values("date")
         if df.empty:
-            return None
-        row = df.iloc[-1]
-        return {
-            "date": str(row.get("observation_date") or ""),
-            "value": round(float(row["DGS10"]), 2),
+            return None, []
+        latest = df.iloc[-1]
+        current_yield = {
+            "date": latest.date.date().isoformat(),
+            "value": round(float(latest.value), 2),
             "unit": "%",
-            "source": "FRED DGS10",
+            "source": str(payload.get("source") or "FRED DGS10"),
         }
+        cutoff = datetime.now().date() - timedelta(days=max(years, 1) * 365)
+        history_df = df[df["date"].dt.date >= cutoff].copy()
+        if history_df.empty:
+            return current_yield, []
+        history_df["month"] = history_df["date"].dt.to_period("M")
+        history_df = history_df.groupby("month", as_index=False).tail(1)
+        history_points = [
+            {"date": row.date.date().isoformat(), "value": round(float(row.value), 2)}
+            for row in history_df.itertuples(index=False)
+            if finite_float(row.value) >= 0
+        ]
+        return current_yield, history_points
     except Exception as exc:
         print(f"[WARN] US 10Y yield unavailable: {exc}")
-        return load_cached_market_ten_year_yield()
+        if refresh:
+            return None, []
+        return load_cached_market_ten_year_yield(), []
 
 
-def load_market_index_price_points(config: dict) -> list[dict]:
+def load_china_ten_year_yield_dataframe(refresh: bool = False) -> pd.DataFrame:
+    def fetch() -> pd.DataFrame:
+        print("[INFO] Fetching China 10Y treasury yield history from AKShare")
+        return ak.bond_zh_us_rate()
+
+    df = get_ak_dataframe_cached(("bond_zh_us_rate",), fetch, refresh=refresh)
+    if df is None or df.empty or "中国国债收益率10年" not in df.columns:
+        return pd.DataFrame()
+    df = df.copy()
+    df["date"] = pd.to_datetime(df.get("日期"), errors="coerce")
+    df["value"] = pd.to_numeric(df["中国国债收益率10年"], errors="coerce")
+    df = df.dropna(subset=["date", "value"])
+    return df.sort_values("date")
+
+
+def build_china_treasury_yield_payload(refresh: bool = False) -> dict:
+    df = load_china_ten_year_yield_dataframe(refresh=refresh)
+    observations = [
+        {"date": row.date.date().isoformat(), "value": round(float(row.value), 4)}
+        for row in df.itertuples(index=False)
+        if finite_float(row.value) >= 0
+    ]
+    return {
+        "series": "CN10Y",
+        "name": "China 10Y Treasury Yield",
+        "unit": "%",
+        "source": "AKShare bond_zh_us_rate",
+        "observations": observations,
+    }
+
+
+def get_china_treasury_yield_payload_with_cache(refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "treasury_yield_v1",
+        "cn_10y",
+        builder=lambda: build_china_treasury_yield_payload(refresh=refresh),
+        refresh=refresh,
+    )
+
+
+def build_china_ten_year_yield_bundle(years: int, refresh: bool = False) -> tuple[dict | None, list[dict]]:
     try:
-        def fetch() -> pd.DataFrame:
-            print(f"[INFO] Fetching global index price history, symbol={config['priceSymbol']}")
-            with temporary_disable_proxy_env():
-                return ak.index_global_hist_em(symbol=config["priceSymbol"])
+        payload = get_china_treasury_yield_payload_with_cache(refresh=refresh)
+        observations = payload.get("observations") if isinstance(payload, dict) else None
+        if not isinstance(observations, list) or not observations:
+            return None, []
+        df = pd.DataFrame(observations)
+        df["date"] = pd.to_datetime(df.get("date"), errors="coerce")
+        df["value"] = pd.to_numeric(df.get("value"), errors="coerce")
+        df = df.dropna(subset=["date", "value"]).sort_values("date")
+        if df.empty:
+            return None, []
+        latest = df.iloc[-1]
+        current_yield = {
+            "date": latest.date.date().isoformat(),
+            "value": round(float(latest.value), 4),
+            "unit": "%",
+            "source": str(payload.get("source") or "AKShare bond_zh_us_rate"),
+        }
+        cutoff = datetime.now().date() - timedelta(days=max(years, 1) * 365)
+        history_df = df[df["date"].dt.date >= cutoff].copy()
+        if history_df.empty:
+            return current_yield, []
+        history_df["month"] = history_df["date"].dt.to_period("M")
+        history_df = history_df.groupby("month", as_index=False).tail(1)
+        history_points = [
+            {"date": row.date.date().isoformat(), "value": round(float(row.value), 4)}
+            for row in history_df.itertuples(index=False)
+            if finite_float(row.value) >= 0
+        ]
+        return current_yield, history_points
+    except Exception as exc:
+        print(f"[WARN] China 10Y yield unavailable: {exc}")
+        return None, []
 
-        df = get_ak_dataframe_cached(("global_index_price", config["priceSymbol"]), fetch)
+
+def load_ten_year_yield(refresh: bool = False) -> dict | None:
+    if not refresh:
+        cached_ten_year_yield = load_cached_market_ten_year_yield()
+        if cached_ten_year_yield is not None:
+            return cached_ten_year_yield
+    current_yield, _ = build_ten_year_yield_bundle(years=1, refresh=refresh)
+    return current_yield
+
+
+def load_ten_year_yield_points(years: int, refresh: bool = False) -> list[dict]:
+    _, history_points = build_ten_year_yield_bundle(years=years, refresh=refresh)
+    return history_points
+
+
+def load_yahoo_index_price_points(symbol: str, years: int, refresh: bool = False) -> list[dict]:
+    def fetch() -> pd.DataFrame:
+        end_ts = int(datetime.now(timezone.utc).timestamp())
+        start_ts = int((datetime.now(timezone.utc) - timedelta(days=max(years, 1) * 370)).timestamp())
+        url = (
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
+            f"?period1={start_ts}&period2={end_ts}&interval=1mo&events=history"
+        )
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        opener = build_opener(ProxyHandler({}))
+        with opener.open(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        result = ((payload.get("chart") or {}).get("result") or [None])[0]
+        if not isinstance(result, dict):
+            return pd.DataFrame()
+        timestamps = result.get("timestamp") or []
+        quotes = (((result.get("indicators") or {}).get("quote") or [None])[0] or {})
+        closes = quotes.get("close") or []
+        rows = []
+        for timestamp, close in zip(timestamps, closes):
+            value = finite_float(close)
+            if value > 0:
+                rows.append(
+                    {
+                        "date": datetime.fromtimestamp(int(timestamp), timezone.utc).date().isoformat(),
+                        "close": value,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    df = get_ak_dataframe_cached(("yahoo_index_price", symbol, years), fetch, refresh=refresh)
+    if df is None or df.empty:
+        return []
+    points = []
+    for row in df.itertuples(index=False):
+        row_dict = row._asdict()
+        date = pd.to_datetime(row_dict.get("date"), errors="coerce")
+        value = finite_float(row_dict.get("close"))
+        if pd.notna(date) and value > 0:
+            points.append({"date": date.date().isoformat(), "value": round(value, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
+def load_market_index_price_points(config: dict, refresh: bool = False) -> list[dict]:
+    try:
+        yahoo_symbols = [config.get("yahooSymbol"), *(config.get("yahooFallbackSymbols") or [])]
+        for yahoo_symbol in [symbol for symbol in yahoo_symbols if symbol]:
+            try:
+                yahoo_points = load_yahoo_index_price_points(str(yahoo_symbol), years=30, refresh=refresh)
+                if yahoo_points:
+                    return yahoo_points
+            except Exception as exc:
+                print(f"[WARN] Yahoo index price history unavailable: {yahoo_symbol}: {exc}")
+
+        def fetch() -> pd.DataFrame:
+            if config.get("priceSymbol"):
+                print(f"[INFO] Fetching global index price history, symbol={config['priceSymbol']}")
+                with temporary_disable_proxy_env():
+                    return ak.index_global_hist_em(symbol=config["priceSymbol"])
+            if config.get("csindexSymbol"):
+                symbol = f"sh{config['csindexSymbol']}"
+                print(f"[INFO] Fetching China index price history, symbol={symbol}")
+                return ak.stock_zh_index_daily(symbol=symbol)
+            return pd.DataFrame()
+
+        price_key = config.get("priceSymbol") or config.get("csindexSymbol") or config.get("name")
+        df = get_ak_dataframe_cached(("market_index_price", price_key), fetch, refresh=refresh)
         if df is None or df.empty:
             return []
         date_col = next((col for col in ["日期", "date", "Date"] if col in df.columns), None)
-        close_col = next((col for col in ["收盘", "收盘价", "最新价", "close", "Close"] if col in df.columns), None)
+        close_col = next((col for col in ["收盘", "close", "Close"] if col in df.columns), None)
         if not date_col or not close_col:
             return []
         points = []
@@ -3467,9 +3668,8 @@ def load_market_index_price_points(config: dict) -> list[dict]:
                 points.append({"date": date.date().isoformat(), "value": round(value, 2)})
         return sorted(points, key=lambda item: item["date"])
     except Exception as exc:
-        print(f"[WARN] Index price history unavailable: {config.get('priceSymbol')}: {exc}")
+        print(f"[WARN] Index price history unavailable: {config.get('priceSymbol') or config.get('csindexSymbol')}: {exc}")
         return []
-
 
 def percentile_rank(values: list[float], current: float) -> float:
     if not values:
@@ -3487,7 +3687,42 @@ def classify_valuation_zone(percentile: float) -> str:
     return "cheap"
 
 
-def build_market_index_valuation_payload(index_code: str, years: int = 20) -> dict:
+def annualized_index_return(price_points: list[dict]) -> float:
+    points = [
+        {
+            "date": pd.to_datetime(point.get("date"), errors="coerce"),
+            "value": finite_float(point.get("value")),
+        }
+        for point in price_points
+        if isinstance(point, dict)
+    ]
+    points = [point for point in points if pd.notna(point["date"]) and point["value"] > 0]
+    if len(points) < 2:
+        return 0
+    points = sorted(points, key=lambda item: item["date"])
+    start = points[0]
+    end = points[-1]
+    days = (end["date"].date() - start["date"].date()).days
+    if days <= 0 or start["value"] <= 0 or end["value"] <= 0:
+        return 0
+    years = days / 365.25
+    if years <= 0:
+        return 0
+    return round(((end["value"] / start["value"]) ** (1 / years) - 1) * 100, 2)
+
+
+def filter_market_index_price_points(config: dict, years: int, refresh: bool = False) -> list[dict]:
+    cutoff = datetime.now().date() - timedelta(days=max(years, 1) * 365)
+    points = load_market_index_price_points(config, refresh=refresh)
+    filtered_points = []
+    for point in points:
+        date = pd.to_datetime(point.get("date"), errors="coerce")
+        if pd.notna(date) and date.date() >= cutoff:
+            filtered_points.append(point)
+    return filtered_points or points
+
+
+def build_market_index_valuation_payload(index_code: str, years: int = 20, refresh: bool = False) -> dict:
     code = str(index_code or "sp500").lower()
     alias_map = {
         "nasdaq": "nasdaq100",
@@ -3510,15 +3745,10 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     config = MARKET_INDEX_CONFIG.get(code, MARKET_INDEX_CONFIG["sp500"])
 
     if code in {"csi300", "csi500", "dividend_low_vol_100"}:
-        pe_points = load_china_index_pe_points(code, years=years)
-        ten_year_yield = None
+        pe_points = load_china_index_pe_points(code, years=years, refresh=refresh)
     else:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            pe_loader = load_nasdaq100_pe_points if code == "nasdaq100" else load_sp500_pe_points
-            pe_future = executor.submit(pe_loader)
-            ten_year_future = executor.submit(load_ten_year_yield)
-            pe_points = pe_future.result()
-            ten_year_yield = ten_year_future.result()
+        pe_loader = load_nasdaq100_pe_points if code == "nasdaq100" else load_sp500_pe_points
+        pe_points = pe_loader(refresh=refresh)
 
     if not pe_points:
         raise ValueError(f"Unable to fetch PE history for {config['displayName']}.")
@@ -3537,12 +3767,6 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     low_line = round(float(pd.Series(values).quantile(0.2)), 2)
     high_line = round(float(pd.Series(values).quantile(0.8)), 2)
     percentile = percentile_rank(values, current_pe)
-    earnings_yield = round(100 / current_pe, 2) if current_pe > 0 else 0
-    equity_risk_premium = (
-        round(earnings_yield - float(ten_year_yield["value"]), 2)
-        if ten_year_yield and ten_year_yield.get("value") is not None
-        else None
-    )
     return {
         "indexCode": code,
         "indexName": config["name"],
@@ -3552,11 +3776,11 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
         "dataQuality": {
             "peHistory": "available",
             "eps": "not_used",
-            "interestRate": "available" if ten_year_yield else "not_connected",
+            "interestRate": "not_connected",
             "notes": [
                 "PE 使用公开网页月度序列，口径为 TTM 或站点披露的估算口径。",
                 config.get("sourceQuality", ""),
-                "当前页面只做 PE 历史分位、盈利收益率和 10Y 利率对比；不再为本页额外抓取指数点位历史，避免慢接口拖累加载。",
+                "历史年化回报使用指数点位从区间起点到终点计算 CAGR；美股指数为价格指数口径，不含股息再投资。",
             ],
         },
         "summary": {
@@ -3568,26 +3792,28 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
             "highLine": high_line,
             "percentile": percentile,
             "valuationZone": classify_valuation_zone(percentile),
-            "earningsYield": earnings_yield,
-            "tenYearYield": ten_year_yield,
-            "equityRiskPremium": equity_risk_premium,
+            "earningsYield": 0,
+            "tenYearYield": None,
+            "equityRiskPremium": None,
             "years": years,
         },
         "peLine": filtered_points,
         "priceLine": [],
+        "interestRateLine": [],
+        "interestRateLabel": "",
         "conclusion": f"{config['displayName']} 当前 PE 为 {current_pe:.2f}x，处于近 {years} 年历史分位 {percentile * 100:.1f}%。",
-        "sourceUrls": [config["peUrl"], "https://fred.stlouisfed.org/series/DGS10"],
+        "sourceUrls": [config["peUrl"]],
     }
 
 
-def build_limited_market_index_valuation_payload(index_code: str, years: int, reason: object) -> dict:
+def build_limited_market_index_valuation_payload(index_code: str, years: int, reason: object, refresh: bool = False) -> dict:
     code = str(index_code or "sp500").lower()
     config = MARKET_INDEX_CONFIG.get(code, MARKET_INDEX_CONFIG["sp500"])
     csindex_symbol = config.get("csindexSymbol")
     if not csindex_symbol:
         raise ValueError(str(reason))
 
-    pe_points = load_csindex_recent_pe_points(csindex_symbol)
+    pe_points = load_csindex_recent_pe_points(csindex_symbol, refresh=refresh)
     if not pe_points:
         raise ValueError(str(reason))
 
@@ -3626,13 +3852,15 @@ def build_limited_market_index_valuation_payload(index_code: str, years: int, re
             "highLine": high_line,
             "percentile": percentile,
             "valuationZone": classify_valuation_zone(percentile),
-            "earningsYield": round(100 / current_pe, 2) if current_pe > 0 else 0,
+            "earningsYield": 0,
             "tenYearYield": None,
             "equityRiskPremium": None,
             "years": years,
         },
         "peLine": pe_points,
         "priceLine": [],
+        "interestRateLine": [],
+        "interestRateLabel": "",
         "conclusion": f"{config['displayName']} current PE is {current_pe:.2f}x. Long-history sources are unavailable, so recent valuation data is shown as a fallback.",
         "sourceUrls": [config["peUrl"]],
     }
@@ -3672,7 +3900,58 @@ def save_market_index_valuation_payload(payload: dict, index_code: str, years: i
     if payload.get("status") != "ok":
         raise ValueError(f"Refusing to cache non-ok market index payload: status={payload.get('status')}")
     ensure_market_index_history_span(index_code, years, payload.get("peLine") if isinstance(payload.get("peLine"), list) else [])
-    return save_cached_payload(payload, "market_index_valuation_v4", index_code, years)
+    cache_payload = dict(payload)
+    cache_payload["summary"] = dict(payload.get("summary") or {})
+    cache_payload["dataQuality"] = dict(payload.get("dataQuality") or {})
+    cache_payload["summary"]["tenYearYield"] = None
+    cache_payload["summary"]["equityRiskPremium"] = None
+    cache_payload["dataQuality"]["interestRate"] = "not_connected"
+    cache_payload["priceLine"] = []
+    cache_payload["interestRateLine"] = []
+    cache_payload["interestRateLabel"] = ""
+    return save_cached_payload(cache_payload, "market_index_valuation_v4", index_code, years)
+
+
+def enrich_market_index_valuation_with_interest(payload: dict, years: int, refresh: bool = False) -> dict:
+    code = str(payload.get("indexCode") or "").lower()
+    us_rate_indexes = {"sp500", "nasdaq100"}
+    china_rate_indexes = {"csi300", "csi500", "dividend_low_vol_100"}
+    if code not in us_rate_indexes | china_rate_indexes:
+        return payload
+
+    if code in china_rate_indexes:
+        ten_year_yield, interest_rate_points = build_china_ten_year_yield_bundle(years=years, refresh=refresh)
+        rate_label = "CN 10Y"
+        rate_url = "https://yield.chinabond.com.cn/"
+    else:
+        ten_year_yield, interest_rate_points = build_ten_year_yield_bundle(years=years, refresh=refresh)
+        rate_label = "US 10Y"
+        rate_url = "https://fred.stlouisfed.org/series/DGS10"
+
+    enriched = dict(payload)
+    enriched["summary"] = dict(payload.get("summary") or {})
+    enriched["dataQuality"] = dict(payload.get("dataQuality") or {})
+    config = MARKET_INDEX_CONFIG.get(code)
+    price_points = filter_market_index_price_points(config, years, refresh=refresh) if config else []
+    if price_points:
+        enriched["priceLine"] = price_points
+    enriched["summary"]["earningsYield"] = annualized_index_return(price_points)
+    enriched["summary"]["tenYearYield"] = ten_year_yield
+    annualized_return = finite_float(enriched["summary"].get("earningsYield"))
+    enriched["summary"]["equityRiskPremium"] = (
+        round(annualized_return - float(ten_year_yield["value"]), 2)
+        if ten_year_yield and ten_year_yield.get("value") is not None and annualized_return != 0
+        else None
+    )
+    enriched["dataQuality"]["interestRate"] = "available" if ten_year_yield or interest_rate_points else "not_connected"
+    enriched["interestRateLine"] = interest_rate_points
+    enriched["interestRateLabel"] = rate_label if interest_rate_points else ""
+    if ten_year_yield or interest_rate_points:
+        source_urls = list(enriched.get("sourceUrls") or [])
+        if rate_url not in source_urls:
+            source_urls.append(rate_url)
+        enriched["sourceUrls"] = source_urls
+    return enriched
 
 
 def get_market_index_valuation_payload_with_cache(index_code: str, years: int, refresh: bool = False) -> dict:
@@ -3694,31 +3973,35 @@ def get_market_index_valuation_payload_with_cache(index_code: str, years: int, r
         "dividend_low_vol": "dividend_low_vol_100",
     }
     code = alias_map.get(code, code)
-    current_cache = load_cached_payload("market_index_valuation_v4", code, years)
-    if is_market_index_cache_usable(current_cache, code, years) and not refresh:
-        return current_cache
+    if not refresh:
+        current_cache = load_cached_payload("market_index_valuation_v4", code, years)
+        if is_market_index_cache_usable(current_cache, code, years):
+            return enrich_market_index_valuation_with_interest(current_cache, years, refresh=refresh)
 
-    stale_cache = load_latest_cached_payload(f"market_index_valuation_v*__{sanitize_cache_part(code)}__{sanitize_cache_part(years)}.json")
-    if not is_market_index_cache_usable(stale_cache, code, years):
-        stale_cache = None
+    stale_cache = None
+    if not refresh:
+        stale_cache = load_latest_cached_payload(f"market_index_valuation_v*__{sanitize_cache_part(code)}__{sanitize_cache_part(years)}.json")
+        if not is_market_index_cache_usable(stale_cache, code, years):
+            stale_cache = None
 
-    if stale_cache is not None and not refresh:
+    if stale_cache is not None:
         stale_cache = dict(stale_cache)
         stale_cache["status"] = "stale_cache"
         stale_cache.setdefault("dataQuality", {}).setdefault("notes", []).append("外部估值源较慢，当前先展示最近一次缓存数据。")
-        return stale_cache
+        return enrich_market_index_valuation_with_interest(stale_cache, years, refresh=refresh)
 
     try:
-        payload = build_market_index_valuation_payload(index_code=code, years=years)
+        payload = build_market_index_valuation_payload(index_code=code, years=years, refresh=refresh)
         save_market_index_valuation_payload(payload, code, years)
-        return payload
+        return enrich_market_index_valuation_with_interest(payload, years, refresh=refresh)
     except Exception as exc:
         if stale_cache is not None:
             stale_cache = dict(stale_cache)
             stale_cache["status"] = "stale_cache"
             stale_cache.setdefault("dataQuality", {}).setdefault("notes", []).append(f"外部估值源暂不可用，使用最近缓存：{exc}")
-            return stale_cache
-        return build_limited_market_index_valuation_payload(code, years, exc)
+            return enrich_market_index_valuation_with_interest(stale_cache, years, refresh=refresh)
+        limited_payload = build_limited_market_index_valuation_payload(code, years, exc, refresh=refresh)
+        return enrich_market_index_valuation_with_interest(limited_payload, years, refresh=refresh)
 
 
 def build_health_payload() -> dict:
@@ -5364,3 +5647,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=5001)
+

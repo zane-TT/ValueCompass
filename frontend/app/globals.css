@@ -1231,6 +1231,22 @@ button {
   margin-top: 14px;
 }
 
+.market-chart-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.market-comparison-card {
+  min-height: 660px;
+}
+
+.market-rate-panel {
+  margin-top: 18px;
+  border-top: 2px solid rgba(18, 18, 18, 0.14);
+  padding-top: 14px;
+}
+
 .market-chart-card,
 .market-side-card,
 .market-empty-state {
@@ -1248,6 +1264,10 @@ button {
 
 .market-index-chart {
   height: 360px;
+}
+
+.market-rate-chart {
+  height: 250px;
 }
 
 .market-source-row {

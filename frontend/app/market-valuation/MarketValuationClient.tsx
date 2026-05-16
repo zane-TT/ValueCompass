@@ -35,6 +35,8 @@ type MarketIndexValuationResponse = {
   };
   peLine: Array<{ date: string; pe: number }>;
   priceLine: Array<{ date: string; value: number }>;
+  interestRateLine?: Array<{ date: string; value: number }>;
+  interestRateLabel?: string;
   conclusion: string;
   sourceUrls: string[];
 };
@@ -81,10 +83,15 @@ export default function MarketValuationClient() {
   const [isMarketIndexLoading, setIsMarketIndexLoading] = useState(false);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chart = useRef<echarts.ECharts | null>(null);
+  const rateChartRef = useRef<HTMLDivElement | null>(null);
+  const rateChart = useRef<echarts.ECharts | null>(null);
   const marketIndexAbortRef = useRef<AbortController | null>(null);
   const marketIndexRequestIdRef = useRef(0);
+  const marketIndexRefreshInFlightRef = useRef(false);
 
   async function loadMarketIndexData(indexCode = marketIndexCode, rangeYears = marketIndexYears, refresh = false) {
+    if (refresh && marketIndexRefreshInFlightRef.current) return;
+    if (refresh) marketIndexRefreshInFlightRef.current = true;
     marketIndexAbortRef.current?.abort();
     const requestId = marketIndexRequestIdRef.current + 1;
     marketIndexRequestIdRef.current = requestId;
@@ -126,6 +133,7 @@ export default function MarketValuationClient() {
         marketIndexAbortRef.current = null;
         setIsMarketIndexLoading(false);
       }
+      if (refresh) marketIndexRefreshInFlightRef.current = false;
     }
   }
 
@@ -135,12 +143,17 @@ export default function MarketValuationClient() {
   }, []);
 
   useEffect(() => {
-    const handleResize = () => chart.current?.resize();
+    const handleResize = () => {
+      chart.current?.resize();
+      rateChart.current?.resize();
+    };
     window.addEventListener("resize", handleResize);
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.current?.dispose();
       chart.current = null;
+      rateChart.current?.dispose();
+      rateChart.current = null;
     };
   }, []);
 
@@ -150,6 +163,7 @@ export default function MarketValuationClient() {
 
     const dates = marketIndexData.peLine.map((item) => item.date);
     const horizontalLine = (value: number) => dates.map((date) => [date, value]);
+    const legendData = ["PE", "均值", "低估线", "高估线"];
 
     chart.current.clear();
     chart.current.setOption(
@@ -157,12 +171,25 @@ export default function MarketValuationClient() {
         animationDuration: 400,
         tooltip: {
           trigger: "axis",
-          valueFormatter: (value: number | string) => {
-            if (typeof value !== "number") return `${value}`;
-            return Number.isFinite(value) ? `${value.toFixed(2)}x` : "-";
+          formatter: (params: unknown) => {
+            const rows = (Array.isArray(params) ? params : [params]) as Array<{
+              axisValueLabel?: string;
+              marker?: string;
+              seriesName?: string;
+              value?: unknown;
+            }>;
+            const title = rows[0]?.axisValueLabel || "";
+            const lines = rows.map((row) => {
+              const rawValue = Array.isArray(row.value) ? row.value[1] : row.value;
+              const numericValue = typeof rawValue === "number" ? rawValue : Number(rawValue);
+              const value = Number.isFinite(numericValue) ? `${numericValue.toFixed(2)}x` : "-";
+              return `${row.marker || ""}${row.seriesName || ""}: ${value}`;
+            });
+            return [title, ...lines].filter(Boolean).join("<br/>");
           },
         },
-        legend: { top: 8, data: ["PE", "均值", "低估线", "高估线"] },
+        legend: { top: 8, data: legendData },
+        axisPointer: { link: [{ xAxisIndex: [0] }] },
         grid: { top: 58, left: 58, right: 40, bottom: 42, containLabel: true },
         xAxis: {
           type: "time",
@@ -221,6 +248,69 @@ export default function MarketValuationClient() {
     });
   }, [marketIndexData]);
 
+  useEffect(() => {
+    const interestRateLine = marketIndexData?.interestRateLine ?? [];
+    if (!marketIndexData || !rateChartRef.current || !interestRateLine.length) {
+      rateChart.current?.dispose();
+      rateChart.current = null;
+      return;
+    }
+
+    const interestRateLabel = marketIndexData.interestRateLabel || "10Y";
+    rateChart.current = echarts.getInstanceByDom(rateChartRef.current) ?? echarts.init(rateChartRef.current);
+    rateChart.current.clear();
+    rateChart.current.setOption(
+      {
+        animationDuration: 400,
+        tooltip: {
+          trigger: "axis",
+          valueFormatter: (value: number | string) => {
+            const numericValue = typeof value === "number" ? value : Number(value);
+            return Number.isFinite(numericValue) ? `${numericValue.toFixed(2)}%` : "-";
+          },
+        },
+        legend: { top: 8, data: [interestRateLabel] },
+        grid: { top: 48, left: 58, right: 40, bottom: 36, containLabel: true },
+        xAxis: {
+          type: "time",
+          boundaryGap: false,
+          axisLabel: {
+            hideOverlap: true,
+            formatter(value: number) {
+              return echarts.time.format(value, "{yyyy}", false);
+            },
+          },
+        },
+        yAxis: {
+          type: "value",
+          name: `${interestRateLabel}(%)`,
+          min: "dataMin",
+          max: "dataMax",
+          splitNumber: 4,
+          axisLabel: { formatter: "{value}%" },
+          splitLine: { lineStyle: { color: "#e5e7eb" } },
+        },
+        series: [
+          {
+            name: interestRateLabel,
+            type: "line",
+            showSymbol: false,
+            smooth: true,
+            data: interestRateLine.map((item) => [item.date, item.value]),
+            lineStyle: { width: 2, color: "#2563eb" },
+            itemStyle: { color: "#2563eb" },
+          },
+        ],
+      },
+      { notMerge: true }
+    );
+
+    requestAnimationFrame(() => {
+      rateChart.current?.resize();
+      window.setTimeout(() => rateChart.current?.resize(), 80);
+    });
+  }, [marketIndexData]);
+
   return (
     <AppShell active="markets">
       <section className="market-valuation-section market-valuation-page" aria-label="大盘估值">
@@ -242,6 +332,7 @@ export default function MarketValuationClient() {
                 key={item.code}
                 type="button"
                 className={`market-index-button ${marketIndexCode === item.code ? "active" : ""}`}
+                disabled={isMarketIndexLoading}
                 onClick={() => {
                   setMarketIndexCode(item.code);
                   void loadMarketIndexData(item.code, marketIndexYears);
@@ -252,6 +343,7 @@ export default function MarketValuationClient() {
             ))}
             <select
               value={marketIndexYears}
+              disabled={isMarketIndexLoading}
               onChange={(event) => {
                 setMarketIndexYears(event.target.value);
                 void loadMarketIndexData(marketIndexCode, event.target.value);
@@ -296,7 +388,7 @@ export default function MarketValuationClient() {
                 <em>近 {marketIndexData.summary.years} 年</em>
               </div>
               <div className="market-kpi-card">
-                <span>盈利收益率 / 10Y</span>
+                <span>历史年化回报 / 10Y</span>
                 <strong>
                   {formatNumber(marketIndexData.summary.earningsYield)}% /{" "}
                   {formatNumber(marketIndexData.summary.tenYearYield?.value)}%
@@ -306,9 +398,15 @@ export default function MarketValuationClient() {
             </div>
 
             <div className="market-valuation-body">
-              <div className="market-chart-card">
-                <div className="market-chart-title">历史 PE 趋势</div>
-                <div ref={chartRef} className="chart-box market-index-chart" />
+              <div className="market-chart-card market-comparison-card">
+                  <div className="market-chart-title">历史 PE 趋势</div>
+                  <div ref={chartRef} className="chart-box market-index-chart" />
+                {(marketIndexData.interestRateLine ?? []).length ? (
+                  <div className="market-rate-panel">
+                    <div className="market-chart-title">{marketIndexData.interestRateLabel || "10Y"} 利率趋势</div>
+                    <div ref={rateChartRef} className="chart-box market-rate-chart" />
+                  </div>
+                ) : null}
               </div>
               <div className="market-side-card">
                 <div className="market-chart-title">数据口径</div>
@@ -317,8 +415,8 @@ export default function MarketValuationClient() {
                   <strong>{getDataQualityLabel(marketIndexData.dataQuality.peHistory)}</strong>
                 </div>
                 <div className="market-source-row">
-                  <span>价格/EPS拆解</span>
-                  <strong>{getDataQualityLabel(marketIndexData.dataQuality.eps)}</strong>
+                  <span>指数点位历史</span>
+                  <strong>{marketIndexData.priceLine.length ? "已连接" : "未连接"}</strong>
                 </div>
                 <div className="market-source-row">
                   <span>利率</span>
