@@ -430,12 +430,13 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
     "dividend_low_vol_100": {
         "name": "CSI Dividend Low Volatility 100",
         "displayName": "红利低波100",
-        "peSource": "lixinger_csindex",
-        "peUrl": "https://www.lixinger.com/equity/index/detail/csi/930955/930955/fundamental/valuation/pe-ttm?metrics-type=mcw",
+        "peSource": "etfrun_lixinger_csindex",
+        "peUrl": "https://www.etf.run/index/CSI/930955",
         "csindexSymbol": "930955",
         "lixingerSymbol": "930955",
-        "sourceLabel": "理杏仁开放平台指数估值 / 中证指数官网备用",
-        "sourceQuality": "红利低波100 优先使用理杏仁开放平台 PE_TTM 历史序列；若未配置 LIXINGER_TOKEN，仅能回退中证指数官网近期估值，且不会用短序列计算长期分位。",
+        "etfRunUrl": "https://www.etf.run/index/CSI/930955",
+        "sourceLabel": "ETF.run 指数估值 / 理杏仁开放平台 / 中证指数官网备用",
+        "sourceQuality": "红利低波100 优先使用 ETF.run 页面内嵌的等权 PE_TTM 历史序列；若失败，再尝试理杏仁开放平台和中证指数官网近期估值，且不会用短序列计算长期分位。",
     },
 }
 
@@ -3350,9 +3351,52 @@ def load_lixinger_index_pe_points(symbol: str, start_date: str = "2017-05-26") -
     return sorted(points, key=lambda item: item["date"])
 
 
+def load_etfrun_index_pe_points(market: str, symbol: str) -> list[dict]:
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching ETF.run index PE history, market={market}, symbol={symbol}")
+        url = f"https://www.etf.run/index/{market}/{symbol}"
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        match = re.search(
+            r'\\"compressedIndexDaily\\":\{\\"fieldNames\\":(\[.*?\]),\\"values\\":(\[\[.*?\]\])\}',
+            response.text,
+        )
+        if not match:
+            raise ValueError("ETF.run compressedIndexDaily not found.")
+        field_names = json.loads(match.group(1).replace('\\"', '"'))
+        values = json.loads(match.group(2).replace('\\"', '"'))
+        return pd.DataFrame(values, columns=field_names)
+
+    try:
+        df = get_ak_dataframe_cached(("etfrun_index_pe", market, symbol), fetch)
+    except Exception as exc:
+        print(f"[WARN] ETF.run index PE unavailable, market={market}, symbol={symbol}: {exc}")
+        return []
+
+    if df is None or df.empty or "date" not in df.columns or "equalWeightedPeTtm" not in df.columns:
+        return []
+
+    points: list[dict] = []
+    for row in df.to_dict(orient="records"):
+        date = pd.to_datetime(row.get("date"), errors="coerce")
+        pe = finite_float(row.get("equalWeightedPeTtm"))
+        if pd.notna(date) and pe > 0:
+            points.append({"date": date.date().isoformat(), "pe": round(pe, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
 def load_china_index_pe_points(index_code: str) -> list[dict]:
     config = MARKET_INDEX_CONFIG[index_code]
     if index_code == "dividend_low_vol_100":
+        points = load_etfrun_index_pe_points("CSI", config["csindexSymbol"])
+        if points:
+            return points
         points = load_lixinger_index_pe_points(config["lixingerSymbol"])
         if points:
             return points
