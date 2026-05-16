@@ -4,12 +4,16 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import akshare as ak
 import akshare.stock_feature.stock_disclosure_cninfo as disclosure_cninfo
@@ -47,6 +51,20 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai-proxy.org/v1"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-nano-2026-03-17"
 DEFAULT_OPENAI_TEMPERATURE = 0.1
 APP_STARTED_AT = datetime.now(timezone.utc)
+AK_DATA_CACHE_TTL_SECONDS = 300
+AK_SUBPROCESS_TIMEOUT_SECONDS = 45
+
+
+class InflightCall:
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.result: Any = None
+        self.error: BaseException | None = None
+
+
+INFLIGHT_LOCK = threading.Lock()
+INFLIGHT_CALLS: dict[tuple[object, ...], InflightCall] = {}
+AK_DATA_CACHE: dict[tuple[object, ...], tuple[float, pd.DataFrame]] = {}
 
 
 def get_frontend_file(path: str) -> Path | None:
@@ -167,6 +185,30 @@ BUSINESS_EXPLANATION_RULES = [
         "businessCategory": "product",
     },
     {
+        "keywords": ["氧化铝", "氧化铝产品"],
+        "businessDescription": "这是电解铝上游的基础原料，收入主要跟氧化铝销量、市场价格和铝土矿/能源成本相关。它通常比终端铝材更偏资源和周期属性。",
+        "priceDrivers": ["氧化铝现货价格", "铝土矿成本", "烧碱和能源价格", "电解铝开工率", "进口供应"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["铝加工", "铝加工产品", "铝材", "铝板", "铝带", "铝箔", "铝合金"],
+        "businessDescription": "这是把铝进一步加工成板带箔、型材或合金材料的业务，收入不只看铝价，还要看加工费、产品结构和下游客户需求。",
+        "priceDrivers": ["铝价", "加工费", "产品规格结构", "汽车和包装需求", "电力与人工成本", "出口订单"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["电解铝", "原铝", "铝锭", "铝液"],
+        "businessDescription": "这是铝产业链中游的冶炼产品，收入对铝价和产量非常敏感，利润重点看电力成本、氧化铝成本和产能利用率。",
+        "priceDrivers": ["沪铝价格", "电力成本", "氧化铝成本", "产能利用率", "库存周期", "限电限产政策"],
+        "businessCategory": "product",
+    },
+    {
+        "keywords": ["炭素", "预焙阳极", "阳极炭块"],
+        "businessDescription": "这是电解铝生产消耗的配套材料，收入通常跟电解铝开工、阳极价格、石油焦和煤沥青等原料成本相关。",
+        "priceDrivers": ["电解铝开工率", "预焙阳极价格", "石油焦成本", "煤沥青成本", "配套产能利用率"],
+        "businessCategory": "product",
+    },
+    {
         "keywords": ["工程及金属索具"],
         "businessDescription": "这是偏工程场景的金属索具，通常用于吊装、连接、固定和大型设备配套。收入更容易跟基建、能源、桥梁、海工和大型制造项目的开工节奏相关。",
         "priceDrivers": ["工程项目开工", "大客户订单", "钢材成本", "安全认证要求", "定制化规格", "项目交付周期"],
@@ -203,6 +245,67 @@ BUSINESS_EXPLANATION_RULES = [
         "businessCategory": "service",
     },
 ]
+
+DRIVER_MODEL_REGISTRY: dict[str, dict] = {
+    "aluminum_commodity": {
+        "label": "铝商品价格驱动",
+        "description": "适用于电解铝、氧化铝、铝加工等以铝价和单位成本为核心的公司。",
+        "marketData": [
+            {"metric": "shfe_aluminum", "label": "沪铝期货/现货", "unit": "元/吨", "sourcePriority": ["SHFE", "SMM", "长江有色"]},
+            {"metric": "alumina_price", "label": "氧化铝价格", "unit": "元/吨", "sourcePriority": ["SHFE", "SMM"]},
+            {"metric": "power_cost_proxy", "label": "电力成本代理", "unit": "元/度", "sourcePriority": ["公司披露", "区域电价"]},
+            {"metric": "prebaked_anode_price", "label": "预焙阳极/炭素价格", "unit": "元/吨", "sourcePriority": ["SMM", "行业价格"]},
+        ],
+        "operatingData": ["铝产品产量", "铝产品销量", "铝产品收入", "铝产品成本", "单吨毛利"],
+        "formula": "铝产品利润 ≈ 销量 × (铝价 - 氧化铝成本 - 电力成本 - 阳极等辅料成本 - 其他单吨成本)",
+    },
+    "oil_gas_integrated": {
+        "label": "综合油气多分部驱动",
+        "description": "适用于上游油气、炼化、销售和天然气业务并存的综合能源公司。",
+        "marketData": [
+            {"metric": "brent_crude", "label": "Brent 原油", "unit": "美元/桶", "sourcePriority": ["ICE", "EIA"]},
+            {"metric": "wti_crude", "label": "WTI 原油", "unit": "美元/桶", "sourcePriority": ["NYMEX", "EIA"]},
+            {"metric": "dubai_oman_crude", "label": "Dubai/Oman 原油", "unit": "美元/桶", "sourcePriority": ["DME", "市场行情"]},
+            {"metric": "domestic_fuel_price_adjustment", "label": "国内成品油调价", "unit": "元/吨", "sourcePriority": ["发改委"]},
+            {"metric": "import_lng_price", "label": "进口 LNG/JCC 相关成本", "unit": "美元/MMBtu", "sourcePriority": ["海关", "JCC", "JKM"]},
+            {"metric": "chemical_spread", "label": "炼化/化工价差", "unit": "元/吨", "sourcePriority": ["商品行情", "行业数据"]},
+            {"metric": "usd_cny", "label": "美元兑人民币", "unit": "汇率", "sourcePriority": ["央行", "外汇交易中心"]},
+        ],
+        "operatingData": ["原油产量", "天然气产量", "原油实现价格", "天然气实现价格", "炼厂加工量", "天然气销量", "分部经营利润"],
+        "formula": "经营利润 ≈ 上游油气利润 + 炼化价差利润 + 销售利润 + 天然气购销价差利润 - 总部及其他",
+    },
+    "container_shipping": {
+        "label": "集装箱运价驱动",
+        "description": "适用于以集装箱航运为核心，利润对运价指数和箱量敏感的公司。",
+        "marketData": [
+            {"metric": "scfi", "label": "上海出口集装箱运价指数 SCFI", "unit": "指数", "sourcePriority": ["上海航运交易所"]},
+            {"metric": "ccfi", "label": "中国出口集装箱运价指数 CCFI", "unit": "指数", "sourcePriority": ["上海航运交易所"]},
+            {"metric": "fbx", "label": "Freightos Baltic Index", "unit": "美元/FEU", "sourcePriority": ["Freightos"]},
+            {"metric": "drewry_wci", "label": "Drewry WCI", "unit": "美元/FEU", "sourcePriority": ["Drewry"]},
+            {"metric": "vlsfo_fuel", "label": "低硫燃料油 VLSFO", "unit": "美元/吨", "sourcePriority": ["船燃行情", "新加坡燃油"]},
+            {"metric": "usd_cny", "label": "美元兑人民币", "unit": "汇率", "sourcePriority": ["央行", "外汇交易中心"]},
+            {"metric": "port_congestion", "label": "港口拥堵/绕航影响", "unit": "事件/指数", "sourcePriority": ["航运新闻", "AIS/港口数据"]},
+        ],
+        "operatingData": ["集装箱运输量TEU", "单箱收入", "单箱成本", "燃油成本", "分航线收入", "码头吞吐量"],
+        "formula": "航运利润 ≈ 箱量 × (单箱收入 - 单箱成本) + 码头利润；单箱收入由运价指数、长协价和航线结构共同决定",
+    },
+    "generic_volume_price": {
+        "label": "通用量价驱动",
+        "description": "适用于未命中专用模型但可按销量、价格、成本和费用率分析的公司。",
+        "marketData": [],
+        "operatingData": ["销量/产量", "ASP", "单位成本", "毛利率", "费用率", "订单或合同负债"],
+        "formula": "利润 ≈ 销量 × (单价 - 单位成本) - 期间费用 - 税费",
+    },
+    "generic_spread": {
+        "label": "通用价差驱动",
+        "description": "适用于成本端和产品端都有市场价格，利润主要取决于价差的公司。",
+        "marketData": [{"metric": "input_output_spread", "label": "产品-原料价差", "unit": "元/吨", "sourcePriority": ["商品行情", "行业数据"]}],
+        "operatingData": ["产量", "产品售价", "原料成本", "单位加工费", "毛利率"],
+        "formula": "利润 ≈ 产销量 × 产品原料价差 - 固定成本 - 费用",
+    },
+}
+
+KNOWN_DRIVER_MODELS = list(DRIVER_MODEL_REGISTRY.keys())
 
 ASSET_MAPPING = {
     "现金": [["货币资金"], ["总现金"]],
@@ -382,6 +485,35 @@ def cache_file_path(prefix: str, *parts: object) -> Path:
     return CACHE_DIR / f"{filename}.json"
 
 
+def run_singleflight(key: tuple[object, ...], builder: Callable[[], Any]) -> Any:
+    with INFLIGHT_LOCK:
+        call = INFLIGHT_CALLS.get(key)
+        if call is None:
+            call = InflightCall()
+            INFLIGHT_CALLS[key] = call
+            owner = True
+        else:
+            owner = False
+
+    if not owner:
+        print(f"[INFO] Waiting for in-flight build: {key}")
+        call.event.wait()
+        if call.error is not None:
+            raise call.error
+        return call.result
+
+    try:
+        call.result = builder()
+        return call.result
+    except BaseException as exc:
+        call.error = exc
+        raise
+    finally:
+        with INFLIGHT_LOCK:
+            INFLIGHT_CALLS.pop(key, None)
+        call.event.set()
+
+
 def load_cached_payload(prefix: str, *parts: object) -> dict | None:
     path = cache_file_path(prefix, *parts)
     if not path.exists():
@@ -400,10 +532,92 @@ def load_cached_payload(prefix: str, *parts: object) -> dict | None:
 def save_cached_payload(payload: dict, prefix: str, *parts: object) -> dict:
     ensure_cache_dir()
     path = cache_file_path(prefix, *parts)
-    with path.open("w", encoding="utf-8") as cache_file:
+    tmp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as cache_file:
         json.dump(payload, cache_file, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
     print(f"[INFO] Cache saved: {path.name}")
     return payload
+
+
+def get_cached_payload_or_build(
+    prefix: str,
+    *parts: object,
+    builder: Callable[[], dict],
+    refresh: bool = False,
+) -> dict:
+    if not refresh:
+        cached_payload = load_cached_payload(prefix, *parts)
+        if cached_payload is not None:
+            return cached_payload
+
+    def build_and_save() -> dict:
+        if not refresh:
+            cached_payload = load_cached_payload(prefix, *parts)
+            if cached_payload is not None:
+                return cached_payload
+        payload = builder()
+        save_cached_payload(payload, prefix, *parts)
+        return payload
+
+    return run_singleflight(("payload", prefix, *parts), build_and_save)
+
+
+def get_ak_dataframe_cached(key: tuple[object, ...], builder: Callable[[], pd.DataFrame]) -> pd.DataFrame:
+    now = time.monotonic()
+    with INFLIGHT_LOCK:
+        cached = AK_DATA_CACHE.get(key)
+        if cached is not None:
+            cached_at, cached_df = cached
+            if now - cached_at < AK_DATA_CACHE_TTL_SECONDS:
+                print(f"[INFO] AK data memory cache hit: {key}")
+                return cached_df.copy()
+            AK_DATA_CACHE.pop(key, None)
+
+    df = run_singleflight(("ak-data", *key), builder)
+    with INFLIGHT_LOCK:
+        AK_DATA_CACHE[key] = (time.monotonic(), df.copy())
+    return df.copy()
+
+
+def run_python_json_subprocess(code: str, *args: str, timeout: int = AK_SUBPROCESS_TIMEOUT_SECONDS) -> Any:
+    env = os.environ.copy()
+    for key in PROXY_ENV_KEYS:
+        env[key] = ""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", code, *args],
+        cwd=str(BASE_DIR),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        detail = stderr or stdout or f"exit code {completed.returncode}"
+        raise RuntimeError(f"AKShare subprocess failed: {detail}")
+
+    output_lines = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+    if not output_lines:
+        raise RuntimeError("AKShare subprocess returned empty output.")
+    return json.loads(output_lines[-1])
+
+
+def stock_profile_cninfo_isolated(stock: str) -> pd.DataFrame:
+    code = r"""
+import json
+import sys
+import akshare as ak
+
+stock = sys.argv[1]
+df = ak.stock_profile_cninfo(symbol=stock)
+print(json.dumps(df.to_dict(orient="records"), ensure_ascii=False))
+"""
+    records = run_python_json_subprocess(code, stock)
+    return pd.DataFrame(records)
 
 
 def get_cache_overview() -> dict:
@@ -547,9 +761,12 @@ def generate_balance_conclusion(bar_data: list[dict]) -> str:
 
 
 def load_balance_sheet(stock: str) -> pd.DataFrame:
-    print(f"[INFO] Fetching balance sheet, stock={stock}")
-    with temporary_disable_proxy_env():
-        df = ak.stock_financial_debt_ths(symbol=stock, indicator="按报告期")
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching balance sheet, stock={stock}")
+        with temporary_disable_proxy_env():
+            return ak.stock_financial_debt_ths(symbol=stock, indicator="按报告期")
+
+    df = get_ak_dataframe_cached(("balance_sheet", stock), fetch)
     print("[DEBUG] Balance columns:")
     print(df.columns.tolist())
     return df
@@ -587,9 +804,13 @@ def get_balance_payload(stock: str, period: str | None) -> dict:
 
 def load_profit_sheet(stock: str) -> pd.DataFrame:
     em_symbol = to_em_symbol(stock)
-    print(f"[INFO] Fetching quarterly profit sheet, symbol={em_symbol}")
-    with temporary_disable_proxy_env():
-        df = ak.stock_profit_sheet_by_quarterly_em(symbol=em_symbol)
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching quarterly profit sheet, symbol={em_symbol}")
+        with temporary_disable_proxy_env():
+            return ak.stock_profit_sheet_by_quarterly_em(symbol=em_symbol)
+
+    df = get_ak_dataframe_cached(("profit_sheet", em_symbol), fetch)
     print("[DEBUG] Profit columns:")
     print(df.columns.tolist())
     return df
@@ -597,9 +818,13 @@ def load_profit_sheet(stock: str) -> pd.DataFrame:
 
 def load_cash_flow_sheet(stock: str) -> pd.DataFrame:
     em_symbol = to_em_symbol(stock)
-    print(f"[INFO] Fetching quarterly cash flow sheet, symbol={em_symbol}")
-    with temporary_disable_proxy_env():
-        df = ak.stock_cash_flow_sheet_by_quarterly_em(symbol=em_symbol)
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching quarterly cash flow sheet, symbol={em_symbol}")
+        with temporary_disable_proxy_env():
+            return ak.stock_cash_flow_sheet_by_quarterly_em(symbol=em_symbol)
+
+    df = get_ak_dataframe_cached(("cash_flow_sheet", em_symbol), fetch)
     print("[DEBUG] Cash flow columns:")
     print(df.columns.tolist())
     return df
@@ -617,9 +842,12 @@ def load_market_cap(stock: str, years: int) -> pd.DataFrame:
     else:
         period = "全部"
 
-    print(f"[INFO] Fetching valuation, stock={stock}, period={period}")
-    with temporary_disable_proxy_env():
-        df = ak.stock_zh_valuation_baidu(symbol=stock, indicator="总市值", period=period)
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching valuation, stock={stock}, period={period}")
+        with temporary_disable_proxy_env():
+            return ak.stock_zh_valuation_baidu(symbol=stock, indicator="总市值", period=period)
+
+    df = get_ak_dataframe_cached(("market_cap", stock, period), fetch)
     print("[DEBUG] Valuation columns:")
     print(df.columns.tolist())
     return df
@@ -954,15 +1182,17 @@ def valuation_period_from_years(years: int) -> str:
 
 def load_pe_ttm(stock: str, years: int) -> pd.DataFrame:
     period = valuation_period_from_years(years)
-    print(f"[INFO] Fetching PE TTM, stock={stock}, period={period}")
 
-    with temporary_disable_proxy_env():
-        df = ak.stock_zh_valuation_baidu(
-            symbol=stock,
-            indicator="市盈率(TTM)",
-            period=period,
-        )
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching PE TTM, stock={stock}, period={period}")
+        with temporary_disable_proxy_env():
+            return ak.stock_zh_valuation_baidu(
+                symbol=stock,
+                indicator="市盈率(TTM)",
+                period=period,
+            )
 
+    df = get_ak_dataframe_cached(("pe_ttm", stock, period), fetch)
     print("[DEBUG] PE columns:")
     print(df.columns.tolist())
     return df
@@ -1060,61 +1290,63 @@ def get_openai_settings() -> dict:
     }
 
 
-def get_balance_payload_with_cache(stock: str, period: str | None) -> dict:
+def get_balance_payload_with_cache(stock: str, period: str | None, refresh: bool = False) -> dict:
     normalized_period = normalize_period(period)
-    cached_payload = load_cached_payload("balance", stock, normalized_period or "latest")
-    if cached_payload is not None:
-        return cached_payload
-
-    payload = get_balance_payload(stock=stock, period=period)
-    save_cached_payload(payload, "balance", stock, normalized_period or "latest")
-    return payload
-
-
-def get_revenue_market_cap_payload_with_cache(stock: str, years: int) -> dict:
-    cached_payload = load_cached_payload("revenue_market_cap_v2", stock, years)
-    if cached_payload is not None:
-        return cached_payload
-
-    payload = get_revenue_market_cap_payload(stock=stock, years=years)
-    save_cached_payload(payload, "revenue_market_cap_v2", stock, years)
-    return payload
+    return get_cached_payload_or_build(
+        "balance",
+        stock,
+        normalized_period or "latest",
+        builder=lambda: get_balance_payload(stock=stock, period=period),
+        refresh=refresh,
+    )
 
 
-def get_profit_market_cap_payload_with_cache(stock: str, years: int) -> dict:
-    cached_payload = load_cached_payload("profit_market_cap_v1", stock, years)
-    if cached_payload is not None:
-        return cached_payload
-
-    payload = get_profit_market_cap_payload(stock=stock, years=years)
-    save_cached_payload(payload, "profit_market_cap_v1", stock, years)
-    return payload
-
-
-def get_cash_flow_quality_payload_with_cache(stock: str, years: int) -> dict:
-    cached_payload = load_cached_payload("cash_flow_quality_v1", stock, years)
-    if cached_payload is not None:
-        return cached_payload
-
-    payload = get_cash_flow_quality_payload(stock=stock, years=years)
-    save_cached_payload(payload, "cash_flow_quality_v1", stock, years)
-    return payload
+def get_revenue_market_cap_payload_with_cache(stock: str, years: int, refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "revenue_market_cap_v2",
+        stock,
+        years,
+        builder=lambda: get_revenue_market_cap_payload(stock=stock, years=years),
+        refresh=refresh,
+    )
 
 
-def get_pe_trend_payload_with_cache(stock: str, years: int) -> dict:
-    cached_payload = load_cached_payload("pe_trend_v1", stock, years)
-    if cached_payload is not None:
-        return cached_payload
+def get_profit_market_cap_payload_with_cache(stock: str, years: int, refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "profit_market_cap_v1",
+        stock,
+        years,
+        builder=lambda: get_profit_market_cap_payload(stock=stock, years=years),
+        refresh=refresh,
+    )
 
-    payload = build_pe_trend_payload(stock=stock, years=years)
-    save_cached_payload(payload, "pe_trend_v1", stock, years)
-    return payload
+
+def get_cash_flow_quality_payload_with_cache(stock: str, years: int, refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "cash_flow_quality_v1",
+        stock,
+        years,
+        builder=lambda: get_cash_flow_quality_payload(stock=stock, years=years),
+        refresh=refresh,
+    )
+
+
+def get_pe_trend_payload_with_cache(stock: str, years: int, refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "pe_trend_v1",
+        stock,
+        years,
+        builder=lambda: build_pe_trend_payload(stock=stock, years=years),
+        refresh=refresh,
+    )
 
 
 def load_company_profile(stock: str) -> pd.DataFrame:
-    print(f"[INFO] Fetching company profile, stock={stock}")
-    with temporary_disable_proxy_env():
-        df = ak.stock_profile_cninfo(symbol=stock)
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching company profile in subprocess, stock={stock}")
+        return stock_profile_cninfo_isolated(stock)
+
+    df = get_ak_dataframe_cached(("company_profile", stock), fetch)
     print("[DEBUG] Company profile columns:")
     print(df.columns.tolist())
     return df
@@ -1122,76 +1354,74 @@ def load_company_profile(stock: str) -> pd.DataFrame:
 
 def load_main_business_composition(stock: str) -> pd.DataFrame:
     symbol = to_em_symbol(stock)
-    print(f"[INFO] Fetching main business composition, symbol={symbol}")
-    with temporary_disable_proxy_env():
-        df = ak.stock_zygc_em(symbol=symbol)
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching main business composition, symbol={symbol}")
+        with temporary_disable_proxy_env():
+            return ak.stock_zygc_em(symbol=symbol)
+
+    df = get_ak_dataframe_cached(("main_business", symbol), fetch)
     print("[DEBUG] Main business columns:")
     print(df.columns.tolist())
     return df
 
 
-def get_company_profile_payload_with_cache(stock: str) -> dict:
-    cached_payload = load_cached_payload("company_profile_v1", stock)
-    if cached_payload is not None:
-        return cached_payload
+def get_company_profile_payload_with_cache(stock: str, refresh: bool = False) -> dict:
+    def build() -> dict:
+        df = load_company_profile(stock)
+        if df is None or df.empty:
+            raise ValueError(f"Unable to fetch company profile for stock {stock}.")
 
-    df = load_company_profile(stock)
-    if df is None or df.empty:
-        raise ValueError(f"Unable to fetch company profile for stock {stock}.")
+        row = df.iloc[0]
+        return {
+            "stock": stock,
+            "companyName": row.get("公司名称", ""),
+            "industry": row.get("所属行业", ""),
+            "mainBusiness": row.get("主营业务", ""),
+            "businessScope": row.get("经营范围", ""),
+            "companyIntro": row.get("机构简介", ""),
+        }
 
-    row = df.iloc[0]
-    payload = {
-        "stock": stock,
-        "companyName": row.get("公司名称", ""),
-        "industry": row.get("所属行业", ""),
-        "mainBusiness": row.get("主营业务", ""),
-        "businessScope": row.get("经营范围", ""),
-        "companyIntro": row.get("机构简介", ""),
-    }
-    save_cached_payload(payload, "company_profile_v1", stock)
-    return payload
+    return get_cached_payload_or_build("company_profile_v1", stock, builder=build, refresh=refresh)
 
 
-def get_main_business_payload_with_cache(stock: str) -> dict:
-    cached_payload = load_cached_payload("main_business_v1", stock)
-    if cached_payload is not None:
-        return cached_payload
+def get_main_business_payload_with_cache(stock: str, refresh: bool = False) -> dict:
+    def build() -> dict:
+        df = load_main_business_composition(stock)
+        if df is None or df.empty:
+            raise ValueError(f"Unable to fetch main business composition for stock {stock}.")
 
-    df = load_main_business_composition(stock)
-    if df is None or df.empty:
-        raise ValueError(f"Unable to fetch main business composition for stock {stock}.")
+        df = df.copy()
+        if "报告日期" in df.columns:
+            df["报告日期_dt"] = pd.to_datetime(df["报告日期"], errors="coerce")
+            latest_date = df["报告日期_dt"].max()
+            if pd.notna(latest_date):
+                df = df[df["报告日期_dt"] == latest_date]
 
-    df = df.copy()
-    if "报告日期" in df.columns:
-        df["报告日期_dt"] = pd.to_datetime(df["报告日期"], errors="coerce")
-        latest_date = df["报告日期_dt"].max()
-        if pd.notna(latest_date):
-            df = df[df["报告日期_dt"] == latest_date]
+        summary_items = []
+        for row in df.itertuples(index=False):
+            row_dict = row._asdict()
+            summary_items.append(
+                {
+                    "reportDate": str(row_dict.get("报告日期") or ""),
+                    "categoryType": row_dict.get("分类类型"),
+                    "itemName": row_dict.get("主营构成"),
+                    "revenue": to_yi(parse_ak_value(row_dict.get("主营收入"))),
+                    "revenueRatio": round(float(row_dict.get("收入比例", 0) or 0), 4),
+                    "cost": to_yi(parse_ak_value(row_dict.get("主营成本"))),
+                    "costRatio": round(float(row_dict.get("成本比例", 0) or 0), 4),
+                    "profit": to_yi(parse_ak_value(row_dict.get("主营利润"))),
+                    "profitRatio": round(float(row_dict.get("利润比例", 0) or 0), 4),
+                    "grossMargin": round(float(row_dict.get("毛利率", 0) or 0), 4),
+                }
+            )
 
-    summary_items = []
-    for row in df.itertuples(index=False):
-        row_dict = row._asdict()
-        summary_items.append(
-            {
-                "reportDate": str(row_dict.get("报告日期") or ""),
-                "categoryType": row_dict.get("分类类型"),
-                "itemName": row_dict.get("主营构成"),
-                "revenue": to_yi(parse_ak_value(row_dict.get("主营收入"))),
-                "revenueRatio": round(float(row_dict.get("收入比例", 0) or 0), 4),
-                "cost": to_yi(parse_ak_value(row_dict.get("主营成本"))),
-                "costRatio": round(float(row_dict.get("成本比例", 0) or 0), 4),
-                "profit": to_yi(parse_ak_value(row_dict.get("主营利润"))),
-                "profitRatio": round(float(row_dict.get("利润比例", 0) or 0), 4),
-                "grossMargin": round(float(row_dict.get("毛利率", 0) or 0), 4),
-            }
-        )
+        return {
+            "stock": stock,
+            "items": summary_items,
+        }
 
-    payload = {
-        "stock": stock,
-        "items": summary_items,
-    }
-    save_cached_payload(payload, "main_business_v1", stock)
-    return payload
+    return get_cached_payload_or_build("main_business_v1", stock, builder=build, refresh=refresh)
 
 
 def normalize_stock_code(stock: str) -> str:
@@ -1310,14 +1540,305 @@ def build_peer_candidates(stock: str, limit: int) -> dict:
     }
 
 
-def get_peer_companies_payload_with_cache(stock: str, limit: int) -> dict:
-    cached_payload = load_cached_payload("peer_companies_v1", stock, limit)
-    if cached_payload is not None:
-        return cached_payload
+def get_peer_companies_payload_with_cache(stock: str, limit: int, refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "peer_companies_v1",
+        stock,
+        limit,
+        builder=lambda: build_peer_candidates(stock=stock, limit=limit),
+        refresh=refresh,
+    )
 
-    payload = build_peer_candidates(stock=stock, limit=limit)
-    save_cached_payload(payload, "peer_companies_v1", stock, limit)
-    return payload
+
+def build_driver_model_segment(
+    model: str,
+    segment_name: str,
+    confidence: float,
+    evidence: list[str],
+    source: str,
+) -> dict:
+    registry_item = DRIVER_MODEL_REGISTRY.get(model, DRIVER_MODEL_REGISTRY["generic_volume_price"])
+    return {
+        "segmentName": segment_name,
+        "driverModel": model,
+        "driverModelLabel": registry_item["label"],
+        "confidence": round(max(0.0, min(confidence, 1.0)), 2),
+        "source": source,
+        "evidence": evidence[:6],
+        "requiredMarketData": registry_item["marketData"],
+        "requiredOperatingData": registry_item["operatingData"],
+        "formula": registry_item["formula"],
+        "description": registry_item["description"],
+        "dataStatus": "requirements_only",
+    }
+
+
+def normalize_driver_model(model: object) -> str:
+    text = str(model or "").strip()
+    return text if text in DRIVER_MODEL_REGISTRY else "generic_volume_price"
+
+
+def rule_classify_profit_driver_model(profile_payload: dict, main_business_payload: dict) -> dict:
+    company_name = str(profile_payload.get("companyName", ""))
+    industry = str(profile_payload.get("industry", ""))
+    main_business = str(profile_payload.get("mainBusiness", ""))
+    business_scope = str(profile_payload.get("businessScope", ""))
+    item_names = [str(item.get("itemName", "")) for item in main_business_payload.get("items", [])[:12]]
+    text = " ".join([company_name, industry, main_business, business_scope, *item_names])
+
+    segments: list[dict] = []
+    if any(keyword in text for keyword in ["电解铝", "氧化铝", "铝加工", "铝锭", "原铝", "铝产品"]):
+        segments.append(
+            build_driver_model_segment(
+                "aluminum_commodity",
+                "铝产品",
+                0.86,
+                ["主营或收入拆分中出现电解铝、氧化铝、铝加工等铝产业链关键词。"],
+                "rule",
+            )
+        )
+
+    if any(keyword in text for keyword in ["石油", "天然气", "炼油", "成品油", "油气", "勘探"]):
+        segments.append(
+            build_driver_model_segment(
+                "oil_gas_integrated",
+                "油气与炼化业务",
+                0.84,
+                ["主营或行业中出现油气、炼油、天然气等综合能源关键词。"],
+                "rule",
+            )
+        )
+
+    if any(keyword in text for keyword in ["集装箱", "航运", "班轮", "海运", "码头", "港口"]):
+        segments.append(
+            build_driver_model_segment(
+                "container_shipping",
+                "集装箱航运/码头",
+                0.86,
+                ["主营或收入拆分中出现集装箱航运、班轮、码头或港口关键词。"],
+                "rule",
+            )
+        )
+
+    if not segments:
+        generic_model = "generic_spread" if any(keyword in text for keyword in ["化工", "钢铁", "冶炼", "原料", "价差"]) else "generic_volume_price"
+        segments.append(
+            build_driver_model_segment(
+                generic_model,
+                "主营业务",
+                0.45,
+                ["未命中专用行业模型，先使用通用利润驱动框架。"],
+                "rule",
+            )
+        )
+
+    return {
+        "stock": profile_payload.get("stock", ""),
+        "companyName": company_name,
+        "status": "ok",
+        "source": "rule",
+        "companyType": "mixed" if len(segments) > 1 else segments[0]["driverModel"],
+        "segments": segments,
+        "dataGaps": ["尚未接入对应市场数据连接器，当前输出为数据需求清单和计算框架。"],
+        "knownDriverModels": KNOWN_DRIVER_MODELS,
+    }
+
+
+def ai_classify_profit_driver_model(profile_payload: dict, main_business_payload: dict) -> dict | None:
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        return None
+
+    settings = get_openai_settings()
+    context = {
+        "stock": profile_payload.get("stock", ""),
+        "companyName": profile_payload.get("companyName", ""),
+        "industry": profile_payload.get("industry", ""),
+        "mainBusiness": profile_payload.get("mainBusiness", ""),
+        "businessScope": profile_payload.get("businessScope", ""),
+        "revenueItems": main_business_payload.get("items", [])[:20],
+        "knownDriverModels": KNOWN_DRIVER_MODELS,
+        "driverModelRegistry": {
+            key: {
+                "label": value["label"],
+                "description": value["description"],
+                "marketMetrics": [metric["metric"] for metric in value["marketData"]],
+                "operatingData": value["operatingData"],
+            }
+            for key, value in DRIVER_MODEL_REGISTRY.items()
+        },
+    }
+    client = OpenAI(
+        api_key=settings["api_key"],
+        base_url=settings["base_url"],
+        http_client=httpx.Client(trust_env=False),
+    )
+    prompt = (
+        "你是上市公司利润驱动模型识别器。请只从 knownDriverModels 中选择模型；如果没有专用模型，选择 generic_volume_price 或 generic_spread。\n"
+        "不要编造行情数值，不要输出 URL。你只负责选择利润驱动模型、业务分部、证据和数据缺口。\n"
+        "输出严格 JSON，格式：\n"
+        "{"
+        "\"companyType\":\"\","
+        "\"segments\":[{\"segmentName\":\"\",\"driverModel\":\"\",\"confidence\":0.0,\"evidence\":[\"...\"]}],"
+        "\"dataGaps\":[\"...\"]"
+        "}\n\n"
+        f"输入：\n{json.dumps(context, ensure_ascii=False, indent=2)}"
+    )
+    response = client.chat.completions.create(
+        model=settings["model"],
+        temperature=0.0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": "你只输出严格 JSON。"},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    content = response.choices[0].message.content if response.choices else ""
+    parsed = json.loads((content or "").strip())
+    raw_segments = parsed.get("segments", [])
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise ValueError("AI driver classification returned no segments.")
+
+    segments = []
+    for segment in raw_segments[:6]:
+        if not isinstance(segment, dict):
+            continue
+        model = normalize_driver_model(segment.get("driverModel"))
+        evidence = segment.get("evidence") if isinstance(segment.get("evidence"), list) else []
+        segments.append(
+            build_driver_model_segment(
+                model,
+                str(segment.get("segmentName") or DRIVER_MODEL_REGISTRY[model]["label"]),
+                float(segment.get("confidence") or 0.6),
+                [str(item) for item in evidence],
+                "ai",
+            )
+        )
+
+    if not segments:
+        raise ValueError("AI driver classification segments were invalid.")
+
+    return {
+        "stock": profile_payload.get("stock", ""),
+        "companyName": profile_payload.get("companyName", ""),
+        "status": "ok",
+        "source": "ai",
+        "companyType": parsed.get("companyType") or ("mixed" if len(segments) > 1 else segments[0]["driverModel"]),
+        "segments": segments,
+        "dataGaps": parsed.get("dataGaps") if isinstance(parsed.get("dataGaps"), list) else [],
+        "knownDriverModels": KNOWN_DRIVER_MODELS,
+    }
+
+
+def build_profit_driver_model_payload(stock: str) -> dict:
+    profile_payload = get_company_profile_payload_with_cache(stock=stock)
+    main_business_payload = get_main_business_payload_with_cache(stock=stock)
+    fallback_payload = rule_classify_profit_driver_model(profile_payload, main_business_payload)
+
+    try:
+        ai_payload = ai_classify_profit_driver_model(profile_payload, main_business_payload)
+        return ai_payload or fallback_payload
+    except Exception as exc:
+        print(f"[WARN] AI driver model classification unavailable, fallback to rules: {exc}")
+        fallback_payload["aiError"] = str(exc)
+        return fallback_payload
+
+
+def get_profit_driver_model_payload_with_cache(stock: str, refresh: bool = False) -> dict:
+    return get_cached_payload_or_build(
+        "profit_driver_model_v1",
+        stock,
+        builder=lambda: build_profit_driver_model_payload(stock=stock),
+        refresh=refresh,
+    )
+
+
+def build_health_payload() -> dict:
+    now = datetime.now(timezone.utc)
+    endpoints = {
+        "dashboardData": "/api/dashboard-data?stock=600519&years=8",
+        "balance": "/api/balance?stock=600519",
+        "revenueMarketCap": "/api/revenue-market-cap?stock=000333&years=8",
+        "revenueStructure": "/api/revenue-structure?stock=600519&years=8",
+        "profitMarketCap": "/api/profit-market-cap?stock=600519&years=8",
+        "cashFlowQuality": "/api/cash-flow-quality?stock=600519&years=8",
+        "peerCompanies": "/api/peer-companies?stock=600519&limit=6",
+        "peTrend": "/api/pe-trend?stock=600519&years=8",
+        "profitDriverModel": "/api/profit-driver-model?stock=600519",
+        "aiAnalysis": "POST /api/ai-analysis",
+        "businessTypeAnalysis": "POST /api/business-type-analysis",
+    }
+    return {
+        "status": "ok",
+        "service": "ValueCompass backend",
+        "startedAt": APP_STARTED_AT.isoformat(),
+        "now": now.isoformat(),
+        "uptimeSeconds": round((now - APP_STARTED_AT).total_seconds(), 3),
+        "pythonVersion": sys.version.split()[0],
+        "cache": get_cache_overview(),
+        "availableEndpoints": endpoints,
+    }
+
+
+def build_cache_stats_payload(limit: int = 10) -> dict:
+    recent_limit = max(1, min(int(limit), 50))
+    return {
+        "status": "ok",
+        "cache": get_cache_overview(),
+        "recentFiles": list_recent_cache_files(limit=recent_limit),
+    }
+
+
+def build_dashboard_data_payload(
+    stock: str,
+    period: str | None,
+    years: int,
+    include_peers: bool = True,
+    refresh: bool = False,
+) -> dict:
+    tasks: dict[str, Callable[[], Any]] = {
+        "balance": lambda: get_balance_payload_with_cache(stock=stock, period=period, refresh=refresh),
+        "revenueMarketCap": lambda: get_revenue_market_cap_payload_with_cache(stock=stock, years=years, refresh=refresh),
+        "peTrend": lambda: get_pe_trend_payload_with_cache(stock=stock, years=years, refresh=refresh),
+        "profitMarketCap": lambda: get_profit_market_cap_payload_with_cache(stock=stock, years=years, refresh=refresh),
+        "cashFlowQuality": lambda: get_cash_flow_quality_payload_with_cache(stock=stock, years=years, refresh=refresh),
+        "revenueStructure": lambda: get_cached_payload_or_build(
+            "revenue_structure_v5",
+            stock,
+            years,
+            builder=lambda: get_revenue_structure_payload(stock=stock, years=years),
+            refresh=refresh,
+        ),
+        "health": build_health_payload,
+        "cacheStats": lambda: build_cache_stats_payload(limit=5),
+        "profitDriverModel": lambda: get_profit_driver_model_payload_with_cache(stock=stock, refresh=refresh),
+    }
+    if include_peers:
+        tasks["peerCompanies"] = lambda: get_peer_companies_payload_with_cache(
+            stock=stock,
+            limit=6,
+            refresh=refresh,
+        )
+
+    data: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as executor:
+        future_to_key = {executor.submit(task): key for key, task in tasks.items()}
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                data[key] = future.result()
+            except Exception as exc:
+                print(f"[ERROR] dashboard task failed, key={key}: {exc}")
+                errors[key] = str(exc)
+
+    return {
+        "status": "partial" if errors else "ok",
+        "stock": stock,
+        "period": period or "latest",
+        "years": years,
+        "data": data,
+        "errors": errors,
+    }
 
 
 def is_supplementary_item(item_name: str) -> bool:
@@ -1637,6 +2158,17 @@ def infer_business_explanation(
     company_positioning: dict,
 ) -> dict:
     if dimension == "region":
+        region_name = (item_name or "").strip()
+        if "国外" in region_name or "海外" in region_name or "境外" in region_name:
+            return {
+                "businessDescription": "这是公司海外市场收入。它主要反映公司能否把产品卖到境外，以及出口价格、汇率和海外需求对收入的影响。",
+                "priceDrivers": ["海外需求", "出口报价", "汇率", "贸易政策", "海运费用", "海外竞争格局"],
+            }
+        if "国内" in region_name or "境内" in region_name:
+            return {
+                "businessDescription": "这是公司国内市场收入。它主要反映本土客户需求、国内价格周期和区域供需格局对收入的影响。",
+                "priceDrivers": ["国内需求景气度", "本土客户订单", "国内报价水平", "区域供需", "运输半径", "竞争格局"],
+            }
         return {
             "businessDescription": "这不是单独的一项产品或服务，而是公司在这个地区拿到的收入。看地区拆分，主要是为了判断公司依赖哪些市场，以及海外和国内的需求差异。",
             "priceDrivers": ["区域需求景气度", "当地运价或报价水平", "汇率", "贸易政策", "竞争格局"],
@@ -1680,6 +2212,23 @@ def infer_business_explanation(
             }
 
     label = company_positioning.get("primaryUnitLabel", "业务")
+    if dimension == "product":
+        clean_item_name = (item_name or label or "这项业务").strip()
+        if company_positioning.get("companyNature") == "product":
+            return {
+                "businessDescription": f"{clean_item_name}是公司收入拆分里的一个具体产品线。看它时不要只看收入占比，还要结合售价周期、销量、单位成本和毛利率变化来判断盈利质量。",
+                "priceDrivers": ["产品价格", "销量", "原材料成本", "能源成本", "产品结构", "下游需求"],
+            }
+        if company_positioning.get("companyNature") == "service":
+            return {
+                "businessDescription": f"{clean_item_name}更适合理解为一个业务交付单元。重点不是单件产品卖了多少，而是客户需求、合同价格、履约成本和产能/人员利用率。",
+                "priceDrivers": ["客户订单", "合同价格", "履约成本", "利用率", "交付效率", "竞争格局"],
+            }
+        return {
+            "businessDescription": f"{clean_item_name}是公司收入拆分里的一个平台或业务单元。重点看流量、客户活跃度、收费率和变现效率，而不是只看收入规模。",
+            "priceDrivers": ["流量增长", "客户活跃度", "收费率", "广告或服务变现", "竞争格局"],
+        }
+
     if company_positioning.get("companyNature") == "platform":
         return {
             "businessDescription": f"这是公司主营收入里的一个{label}单元。判断它重要不重要，建议优先看流量、商家生态、抽佣率和平台变现效率，而不是只看卖了多少货。",
@@ -1838,12 +2387,143 @@ def build_revenue_insight_points(
     return insights
 
 
+def should_use_ai_revenue_explanations() -> bool:
+    return bool(os.getenv("OPENAI_API_KEY", "").strip())
+
+
+def build_ai_explanation_items(
+    product_items: list[dict],
+    region_items: list[dict],
+    channel_items: list[dict],
+    industry_items: list[dict],
+) -> list[dict]:
+    combined_items: list[dict] = []
+    for dimension, items in [
+        ("product", product_items),
+        ("region", region_items),
+        ("channel", channel_items),
+        ("industry", industry_items),
+    ]:
+        for item in items[:8]:
+            combined_items.append(
+                {
+                    "dimension": dimension,
+                    "itemName": item.get("itemName", ""),
+                    "revenue": item.get("revenue"),
+                    "revenueRatio": item.get("revenueRatio"),
+                    "grossMargin": item.get("grossMargin"),
+                    "revenueGrowth": item.get("revenueGrowth"),
+                }
+            )
+    return combined_items
+
+
+def merge_ai_explanations(items: list[dict], dimension: str, explanation_lookup: dict[tuple[str, str], dict]) -> list[dict]:
+    merged_items: list[dict] = []
+    for item in items:
+        merged_item = dict(item)
+        item_name = str(item.get("itemName", ""))
+        ai_explanation = explanation_lookup.get((dimension, item_name))
+        if ai_explanation:
+            description = str(ai_explanation.get("businessDescription", "")).strip()
+            drivers = ai_explanation.get("priceDrivers")
+            if description:
+                merged_item["businessDescription"] = description
+            if isinstance(drivers, list):
+                clean_drivers = [str(driver).strip() for driver in drivers if str(driver).strip()]
+                if clean_drivers:
+                    merged_item["priceDrivers"] = clean_drivers[:6]
+            merged_item["explanationSource"] = "ai"
+        else:
+            merged_item["explanationSource"] = "rule"
+        merged_items.append(merged_item)
+    return merged_items
+
+
+def enrich_revenue_items_with_ai_explanations(
+    stock: str,
+    profile_payload: dict,
+    company_positioning: dict,
+    product_items: list[dict],
+    region_items: list[dict],
+    channel_items: list[dict],
+    industry_items: list[dict],
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    if not should_use_ai_revenue_explanations():
+        return product_items, region_items, channel_items, industry_items
+
+    explanation_items = build_ai_explanation_items(product_items, region_items, channel_items, industry_items)
+    if not explanation_items:
+        return product_items, region_items, channel_items, industry_items
+
+    try:
+        settings = get_openai_settings()
+        client = OpenAI(
+            api_key=settings["api_key"],
+            base_url=settings["base_url"],
+            http_client=httpx.Client(trust_env=False),
+        )
+        company_context = {
+            "stock": stock,
+            "companyName": profile_payload.get("companyName", ""),
+            "industry": profile_payload.get("industry", ""),
+            "mainBusiness": profile_payload.get("mainBusiness", ""),
+            "businessScope": profile_payload.get("businessScope", ""),
+            "companyPositioning": company_positioning,
+        }
+        user_prompt = (
+            "你是上市公司业务分析师。请根据公司资料和收入拆分项，为每个条目生成更贴近业务实质的中文解释。\n"
+            "要求：\n"
+            "1. 只能基于给定信息做审慎判断，不要编造未提供的客户、价格或产能数据。\n"
+            "2. businessDescription 用 1-2 句中文，解释这个收入项到底卖的是什么/代表什么，以及观察重点。\n"
+            "3. priceDrivers 给 4-6 个短词，表示价格或收入变化的主要影响因素。\n"
+            "4. 不要使用模板化重复话术；同一公司下不同产品、地区、渠道要体现差异。\n"
+            "5. 只输出 JSON，格式为 {\"items\":[{\"dimension\":\"product\",\"itemName\":\"...\",\"businessDescription\":\"...\",\"priceDrivers\":[\"...\"]}]}。\n\n"
+            f"公司资料：\n{json.dumps(company_context, ensure_ascii=False, indent=2)}\n\n"
+            f"收入拆分项：\n{json.dumps(explanation_items, ensure_ascii=False, indent=2)}"
+        )
+        response = client.chat.completions.create(
+            model=settings["model"],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "你只输出严格 JSON，不输出 Markdown。"},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = response.choices[0].message.content if response.choices else ""
+        parsed = json.loads((content or "").strip())
+        parsed_items = parsed.get("items", [])
+        if not isinstance(parsed_items, list):
+            raise ValueError("AI explanation payload missing items list.")
+
+        explanation_lookup: dict[tuple[str, str], dict] = {}
+        for item in parsed_items:
+            if not isinstance(item, dict):
+                continue
+            dimension = str(item.get("dimension", "")).strip()
+            item_name = str(item.get("itemName", "")).strip()
+            if dimension and item_name:
+                explanation_lookup[(dimension, item_name)] = item
+
+        return (
+            merge_ai_explanations(product_items, "product", explanation_lookup),
+            merge_ai_explanations(region_items, "region", explanation_lookup),
+            merge_ai_explanations(channel_items, "channel", explanation_lookup),
+            merge_ai_explanations(industry_items, "industry", explanation_lookup),
+        )
+    except Exception as exc:
+        print(f"[WARN] AI revenue explanations unavailable, fallback to rules: {exc}")
+        return product_items, region_items, channel_items, industry_items
+
+
 def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
     profile_payload = get_company_profile_payload_with_cache(stock=stock)
     main_business_payload = get_main_business_payload_with_cache(stock=stock)
     annual_report_payload = get_latest_report_text_payload_v2(stock=stock, category="年报", cache_key="annual_report_v1")
     balance_payload = get_balance_payload_with_cache(stock=stock, period=None)
     revenue_market_cap_payload = get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
+    profit_driver_model_payload = get_profit_driver_model_payload_with_cache(stock=stock)
 
     items = main_business_payload.get("items", [])
     company_main_business = str(profile_payload.get("mainBusiness", ""))
@@ -1885,6 +2565,15 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
         dimension="channel",
         company_positioning=company_positioning,
     )
+    product_items, region_items, channel_items, industry_items = enrich_revenue_items_with_ai_explanations(
+        stock=stock,
+        profile_payload=profile_payload,
+        company_positioning=company_positioning,
+        product_items=product_items,
+        region_items=region_items,
+        channel_items=channel_items,
+        industry_items=industry_items,
+    )
     contract_liability_item = find_bar_item(balance_payload.get("barData", []), "预收款")
 
     insight_points = build_revenue_insight_points(
@@ -1917,6 +2606,7 @@ def get_revenue_structure_payload(stock: str, years: int = 8) -> dict:
             "trendConclusion": revenue_market_cap_payload.get("conclusion", ""),
         },
         "companyPositioning": company_positioning,
+        "profitDriverModel": profit_driver_model_payload,
         "breakdowns": {
             "byProduct": product_items,
             "byRegion": region_items,
@@ -2207,6 +2897,7 @@ def generate_ai_analysis(stock: str, period: str | None, years: int, company_mat
         period=period,
         years=years,
         company_material=company_material,
+        context=context,
     )
     business_type_analysis = business_type_result.get("analysis")
 
@@ -2276,9 +2967,10 @@ def generate_business_type_analysis(
     period: str | None,
     years: int,
     company_material: str | None = None,
+    context: dict | None = None,
 ) -> dict:
     settings = get_openai_settings()
-    context = build_ai_analysis_context(stock=stock, period=period, years=years)
+    context = context or build_ai_analysis_context(stock=stock, period=period, years=years)
     client = OpenAI(
         api_key=settings["api_key"],
         base_url=settings["base_url"],
@@ -2355,14 +3047,7 @@ def api_pe_trend(stock: str = "000333", years: str = "8", refresh: str = ""):
     try:
         years = normalize_years(years_param, default=8)
 
-        if not should_refresh:
-            cached_payload = load_cached_payload("pe_trend_v1", stock, years)
-            if cached_payload is not None:
-                return cached_payload
-
-        payload = build_pe_trend_payload(stock=stock, years=years)
-        save_cached_payload(payload, "pe_trend_v1", stock, years)
-        return payload
+        return get_pe_trend_payload_with_cache(stock=stock, years=years, refresh=should_refresh)
 
     except Exception as exc:
         print(f"[ERROR] {exc}")
@@ -2377,14 +3062,7 @@ def api_balance(stock: str = "600519", period: str | None = None):
     stock = stock.strip() or "600519"
 
     try:
-        normalized_period = normalize_period(period)
-        cached_payload = load_cached_payload("balance", stock, normalized_period or "latest")
-        if cached_payload is not None:
-            return cached_payload
-
-        payload = get_balance_payload(stock=stock, period=period)
-        save_cached_payload(payload, "balance", stock, normalized_period or "latest")
-        return payload
+        return get_balance_payload_with_cache(stock=stock, period=period)
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return JSONResponse(
@@ -2400,13 +3078,7 @@ def api_revenue_market_cap(stock: str = "000333", years: str = "8"):
 
     try:
         years = normalize_years(years_param, default=8)
-        cached_payload = load_cached_payload("revenue_market_cap_v2", stock, years)
-        if cached_payload is not None:
-            return cached_payload
-
-        payload = get_revenue_market_cap_payload(stock=stock, years=years)
-        save_cached_payload(payload, "revenue_market_cap_v2", stock, years)
-        return payload
+        return get_revenue_market_cap_payload_with_cache(stock=stock, years=years)
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return JSONResponse(
@@ -2424,14 +3096,13 @@ def api_revenue_structure(stock: str = "600519", years: str = "8", refresh: str 
     try:
         years = normalize_years(years_param, default=8)
 
-        if not should_refresh:
-            cached_payload = load_cached_payload("revenue_structure_v2", stock, years)
-            if cached_payload is not None:
-                return cached_payload
-
-        payload = get_revenue_structure_payload(stock=stock, years=years)
-        save_cached_payload(payload, "revenue_structure_v2", stock, years)
-        return payload
+        return get_cached_payload_or_build(
+            "revenue_structure_v5",
+            stock,
+            years,
+            builder=lambda: get_revenue_structure_payload(stock=stock, years=years),
+            refresh=should_refresh,
+        )
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return JSONResponse(
@@ -2449,14 +3120,7 @@ def api_profit_market_cap(stock: str = "600519", years: str = "8", refresh: str 
     try:
         years = normalize_years(years_param, default=8)
 
-        if not should_refresh:
-            cached_payload = load_cached_payload("profit_market_cap_v1", stock, years)
-            if cached_payload is not None:
-                return cached_payload
-
-        payload = get_profit_market_cap_payload(stock=stock, years=years)
-        save_cached_payload(payload, "profit_market_cap_v1", stock, years)
-        return payload
+        return get_profit_market_cap_payload_with_cache(stock=stock, years=years, refresh=should_refresh)
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return JSONResponse(
@@ -2474,14 +3138,7 @@ def api_cash_flow_quality(stock: str = "600519", years: str = "8", refresh: str 
     try:
         years = normalize_years(years_param, default=8)
 
-        if not should_refresh:
-            cached_payload = load_cached_payload("cash_flow_quality_v1", stock, years)
-            if cached_payload is not None:
-                return cached_payload
-
-        payload = get_cash_flow_quality_payload(stock=stock, years=years)
-        save_cached_payload(payload, "cash_flow_quality_v1", stock, years)
-        return payload
+        return get_cash_flow_quality_payload_with_cache(stock=stock, years=years, refresh=should_refresh)
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return JSONResponse(
@@ -2503,18 +3160,61 @@ def api_peer_companies(stock: str = "600519", limit: str = "6", refresh: str = "
             normalized_limit = 6
         normalized_limit = max(3, min(normalized_limit, 10))
 
-        if not should_refresh:
-            cached_payload = load_cached_payload("peer_companies_v1", stock, normalized_limit)
-            if cached_payload is not None:
-                return cached_payload
-
-        payload = build_peer_candidates(stock=stock, limit=normalized_limit)
-        save_cached_payload(payload, "peer_companies_v1", stock, normalized_limit)
-        return payload
+        return get_peer_companies_payload_with_cache(
+            stock=stock,
+            limit=normalized_limit,
+            refresh=should_refresh,
+        )
     except Exception as exc:
         print(f"[ERROR] {exc}")
         return JSONResponse(
             {"error": str(exc), "stock": stock, "limit": limit_param},
+            status_code=400,
+        )
+
+
+@app.get("/api/profit-driver-model")
+def api_profit_driver_model(stock: str = "600519", refresh: str = ""):
+    stock = normalize_stock_code(stock.strip() or "600519")
+    try:
+        return get_profit_driver_model_payload_with_cache(stock=stock, refresh=refresh == "1")
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "stock": stock},
+            status_code=400,
+        )
+
+
+@app.get("/api/dashboard-data")
+def api_dashboard_data(
+    stock: str = "600519",
+    period: str | None = None,
+    years: str = "8",
+    includePeers: str = "1",
+    refresh: str = "",
+):
+    stock = stock.strip() or "600519"
+    years_param = years
+    try:
+        normalized_years = normalize_years(years_param, default=8)
+        payload = build_dashboard_data_payload(
+            stock=stock,
+            period=period,
+            years=normalized_years,
+            include_peers=includePeers != "0",
+            refresh=refresh == "1",
+        )
+        return payload
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "stock": stock,
+                "period": period,
+                "years": years_param,
+            },
             status_code=400,
         )
 
@@ -2584,29 +3284,7 @@ def api_business_type_analysis(payload: dict[str, Any] | None = Body(default=Non
 
 @app.get("/api/health")
 def api_health():
-    now = datetime.now(timezone.utc)
-    cache_overview = get_cache_overview()
-    endpoints = {
-        "balance": "/api/balance?stock=600519",
-        "revenueMarketCap": "/api/revenue-market-cap?stock=000333&years=8",
-        "revenueStructure": "/api/revenue-structure?stock=600519&years=8",
-        "profitMarketCap": "/api/profit-market-cap?stock=600519&years=8",
-        "cashFlowQuality": "/api/cash-flow-quality?stock=600519&years=8",
-        "peerCompanies": "/api/peer-companies?stock=600519&limit=6",
-        "peTrend": "/api/pe-trend?stock=600519&years=8",
-        "aiAnalysis": "POST /api/ai-analysis",
-        "businessTypeAnalysis": "POST /api/business-type-analysis",
-    }
-    return {
-        "status": "ok",
-        "service": "ValueCompass backend",
-        "startedAt": APP_STARTED_AT.isoformat(),
-        "now": now.isoformat(),
-        "uptimeSeconds": round((now - APP_STARTED_AT).total_seconds(), 3),
-        "pythonVersion": sys.version.split()[0],
-        "cache": cache_overview,
-        "availableEndpoints": endpoints,
-    }
+    return build_health_payload()
 
 
 @app.get("/api/cache/stats")
@@ -2620,11 +3298,7 @@ def api_cache_stats(limit: str = "10"):
             status_code=400,
         )
 
-    return {
-        "status": "ok",
-        "cache": get_cache_overview(),
-        "recentFiles": list_recent_cache_files(limit=recent_limit),
-    }
+    return build_cache_stats_payload(limit=recent_limit)
 
 
 @app.get("/")

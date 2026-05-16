@@ -100,6 +100,38 @@ type PositioningEvidenceItem = {
   detail: string;
 };
 
+type ProfitDriverMetric = {
+  metric: string;
+  label: string;
+  unit: string;
+  sourcePriority: string[];
+};
+
+type ProfitDriverSegment = {
+  segmentName: string;
+  driverModel: string;
+  driverModelLabel: string;
+  confidence: number;
+  source: "ai" | "rule";
+  evidence: string[];
+  requiredMarketData: ProfitDriverMetric[];
+  requiredOperatingData: string[];
+  formula: string;
+  description: string;
+  dataStatus: string;
+};
+
+type ProfitDriverModelResponse = {
+  stock: string;
+  companyName: string;
+  status: string;
+  source: "ai" | "rule";
+  companyType: string;
+  segments: ProfitDriverSegment[];
+  dataGaps: string[];
+  knownDriverModels: string[];
+};
+
 type RevenueStructureResponse = {
   stock: string;
   companyName: string;
@@ -129,6 +161,7 @@ type RevenueStructureResponse = {
     };
     watchMetrics?: string[];
   };
+  profitDriverModel?: ProfitDriverModelResponse;
   breakdowns: {
     byProduct: RevenueBreakdownItem[];
     byRegion: RevenueBreakdownItem[];
@@ -235,6 +268,41 @@ type CacheStatsResponse = {
     sizeBytes: number;
     modifiedAt: string;
   }>;
+};
+
+type DashboardDataResponse = {
+  status: "ok" | "partial";
+  stock: string;
+  period: string;
+  years: number;
+  data: {
+    balance?: BalanceResponse;
+    revenueMarketCap?: TrendResponse;
+    peTrend?: PeTrendResponse;
+    profitMarketCap?: ProfitMarketCapResponse;
+    cashFlowQuality?: CashFlowQualityResponse;
+    revenueStructure?: RevenueStructureResponse;
+    profitDriverModel?: ProfitDriverModelResponse;
+    peerCompanies?: PeerCompaniesResponse;
+    health?: HealthResponse;
+    cacheStats?: CacheStatsResponse;
+  };
+  errors: Partial<
+    Record<
+      | "balance"
+      | "revenueMarketCap"
+      | "peTrend"
+      | "profitMarketCap"
+      | "cashFlowQuality"
+      | "revenueStructure"
+      | "profitDriverModel"
+      | "peerCompanies"
+      | "health"
+      | "cacheStats",
+      string
+    >
+  >;
+  error?: string;
 };
 
 type PeerCompaniesResponse = {
@@ -749,6 +817,7 @@ export default function HomePage() {
   const [cashFlowData, setCashFlowData] = useState<CashFlowQualityResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
   const [peerData, setPeerData] = useState<PeerCompaniesResponse | null>(null);
+  const [profitDriverData, setProfitDriverData] = useState<ProfitDriverModelResponse | null>(null);
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
   const [healthData, setHealthData] = useState<HealthResponse | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStatsResponse | null>(null);
@@ -760,6 +829,7 @@ export default function HomePage() {
   const conflictEvidence = displayedPositioning?.evidence?.conflicts ?? [];
   const watchMetrics = displayedPositioning?.watchMetrics ?? [];
   const autoConclusionItems = buildAutoConclusionItems(profitData, trendData, revenueStructureData, cashFlowData);
+  const profitDriverModel = revenueStructureData?.profitDriverModel || profitDriverData;
 
   const balanceChartRef = useRef<HTMLDivElement | null>(null);
   const trendChartRef = useRef<HTMLDivElement | null>(null);
@@ -772,6 +842,8 @@ export default function HomePage() {
   const peChart = useRef<echarts.ECharts | null>(null);
   const profitChart = useRef<echarts.ECharts | null>(null);
   const cashFlowChart = useRef<echarts.ECharts | null>(null);
+  const loadControllerRef = useRef<AbortController | null>(null);
+  const loadSequenceRef = useRef(0);
 
   function ensureChart(
     ref: RefObject<HTMLDivElement | null>,
@@ -817,6 +889,7 @@ export default function HomePage() {
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      loadControllerRef.current?.abort();
       balanceChart.current?.dispose();
       trendChart.current?.dispose();
       peChart.current?.dispose();
@@ -1449,10 +1522,29 @@ export default function HomePage() {
     const query = getQueryState(overrides);
     const includePeers = options.includePeers ?? true;
     const shouldSyncUrl = options.syncUrl ?? true;
+    const requestId = loadSequenceRef.current + 1;
+    loadSequenceRef.current = requestId;
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
     setAiData(null);
     setAiError(null);
+    setBalanceStatus("正在加载资产负债数据...");
+    setTrendStatus("正在加载业绩与市值数据...");
+    setPeStatus("正在加载市盈率数据...");
+    setProfitStatus("正在加载净利润与市值数据...");
+    setCashFlowStatus("正在加载现金流质量数据...");
+    setRevenueStructureStatus("正在加载收入结构拆解...");
+    setPeerStatus(includePeers ? "正在识别同行竞品..." : "");
+    setBalanceError(null);
+    setTrendError(null);
+    setPeError(null);
+    setProfitError(null);
+    setCashFlowError(null);
+    setRevenueStructureError(null);
     setAiStatus("点击“生成 AI 分析”获取综合解读");
     setRevenueStructureData(null);
+    setProfitDriverData(null);
     setPeerError(null);
     if (!includePeers) {
       setPeerData(null);
@@ -1460,16 +1552,78 @@ export default function HomePage() {
     }
     if (shouldSyncUrl) syncUrl(query);
 
-    await Promise.all([
-      loadBalanceData(query),
-      loadTrendData(query),
-      loadPeData(query),
-      loadProfitMarketCapData(query),
-      loadCashFlowQualityData(query),
-      loadRevenueStructureData(query),
-      ...(includePeers ? [loadPeerCompaniesData(query)] : []),
-      loadSystemStatus(),
-    ]);
+    try {
+      const params = new URLSearchParams({
+        stock: query.stock,
+        years: query.years,
+        includePeers: includePeers ? "1" : "0",
+      });
+      if (query.period) params.set("period", query.period);
+
+      const response = await fetch(`${API_BASE}/api/dashboard-data?${params.toString()}`, {
+        signal: controller.signal,
+      });
+      const payload = await parseApiJson<DashboardDataResponse>(response, "仪表盘数据接口请求失败");
+      if (!response.ok) throw new Error(payload.error || "仪表盘数据接口请求失败");
+      if (requestId !== loadSequenceRef.current) return;
+
+      const { data, errors } = payload;
+
+      if (data.balance) setBalanceData(data.balance);
+      if (data.revenueMarketCap) setTrendData(data.revenueMarketCap);
+      if (data.peTrend) setPeData(data.peTrend);
+      if (data.profitMarketCap) setProfitData(data.profitMarketCap);
+      if (data.cashFlowQuality) setCashFlowData(data.cashFlowQuality);
+      if (data.revenueStructure) setRevenueStructureData(data.revenueStructure);
+      if (data.profitDriverModel) setProfitDriverData(data.profitDriverModel);
+      if (data.peerCompanies) setPeerData(data.peerCompanies);
+      if (data.health) setHealthData(data.health);
+      if (data.cacheStats) setCacheStats(data.cacheStats);
+
+      setBalanceError(errors.balance || null);
+      setTrendError(errors.revenueMarketCap || null);
+      setPeError(errors.peTrend || null);
+      setProfitError(errors.profitMarketCap || null);
+      setCashFlowError(errors.cashFlowQuality || null);
+      setRevenueStructureError(errors.revenueStructure || null);
+      setPeerError(errors.peerCompanies || null);
+      setHealthError(errors.health || errors.cacheStats || null);
+
+      setBalanceStatus(errors.balance ? `加载失败：${errors.balance}` : "加载完成");
+      setTrendStatus(errors.revenueMarketCap ? `加载失败：${errors.revenueMarketCap}` : "加载完成");
+      setPeStatus(errors.peTrend ? `加载失败：${errors.peTrend}` : "加载完成");
+      setProfitStatus(errors.profitMarketCap ? `加载失败：${errors.profitMarketCap}` : "加载完成");
+      setCashFlowStatus(errors.cashFlowQuality ? `加载失败：${errors.cashFlowQuality}` : "加载完成");
+      setRevenueStructureStatus(errors.revenueStructure ? `加载失败：${errors.revenueStructure}` : "加载完成");
+      if (includePeers) {
+        setPeerStatus(
+          errors.peerCompanies
+            ? `同行竞品加载失败：${errors.peerCompanies}`
+            : data.peerCompanies?.sourceLabel
+              ? `同行竞品：${data.peerCompanies.sourceLabel}`
+              : "同行竞品已加载"
+        );
+      }
+    } catch (fetchError) {
+      if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
+      if (requestId !== loadSequenceRef.current) return;
+
+      const message = fetchError instanceof Error ? fetchError.message : "仪表盘数据加载失败";
+      setBalanceError(message);
+      setTrendError(message);
+      setPeError(message);
+      setProfitError(message);
+      setCashFlowError(message);
+      setRevenueStructureError(message);
+      if (includePeers) setPeerError(message);
+      setBalanceStatus(`加载失败：${message}`);
+      setTrendStatus(`加载失败：${message}`);
+      setPeStatus(`加载失败：${message}`);
+      setProfitStatus(`加载失败：${message}`);
+      setCashFlowStatus(`加载失败：${message}`);
+      setRevenueStructureStatus(`加载失败：${message}`);
+      if (includePeers) setPeerStatus(`同行竞品加载失败：${message}`);
+    }
   }
 
   async function loadAiAnalysis() {
@@ -1682,6 +1836,12 @@ export default function HomePage() {
               {watchMetrics.length ? (
                 <div className="summary-copy">重点跟踪：{watchMetrics.join("、")}</div>
               ) : null}
+              {profitDriverModel?.segments?.length ? (
+                <div className="summary-copy">
+                  利润驱动模型：{profitDriverModel.segments.map((segment) => segment.driverModelLabel).join("、")}
+                  {profitDriverModel.source === "ai" ? " · AI识别" : " · 规则识别"}
+                </div>
+              ) : null}
             </div>
 
             <div className="revenue-metric-grid">
@@ -1717,6 +1877,40 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
+
+            {profitDriverModel?.segments?.length ? (
+              <div className="revenue-section-card revenue-section-card-wide">
+                <h4>利润驱动数据清单</h4>
+                <div className="positioning-grid">
+                  {profitDriverModel.segments.slice(0, 3).map((segment) => (
+                    <div key={`${segment.segmentName}-${segment.driverModel}`} className="positioning-column">
+                      <div className="positioning-title">
+                        {segment.segmentName} · {segment.driverModelLabel}
+                      </div>
+                      <div className="positioning-item">
+                        <div className="positioning-item-label">计算框架</div>
+                        <div className="positioning-item-detail">{segment.formula}</div>
+                      </div>
+                      <div className="positioning-item">
+                        <div className="positioning-item-label">需要抓取的市场数据</div>
+                        <div className="positioning-item-detail">
+                          {segment.requiredMarketData.length
+                            ? segment.requiredMarketData.map((metric) => metric.label).join("、")
+                            : "暂无专用外部行情，先使用财报经营数据。"}
+                        </div>
+                      </div>
+                      <div className="positioning-item">
+                        <div className="positioning-item-label">需要抽取的经营数据</div>
+                        <div className="positioning-item-detail">{segment.requiredOperatingData.join("、")}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {profitDriverModel.dataGaps?.length ? (
+                  <div className="summary-copy">数据缺口：{profitDriverModel.dataGaps.join("、")}</div>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="revenue-section-card revenue-section-card-wide">
               <h4>证据链</h4>
