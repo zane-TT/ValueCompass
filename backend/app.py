@@ -430,11 +430,12 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
     "dividend_low_vol_100": {
         "name": "CSI Dividend Low Volatility 100",
         "displayName": "红利低波100",
-        "peSource": "csindex",
-        "peUrl": "https://www.csindex.com.cn/zh-CN/indices/index-detail/930955",
+        "peSource": "lixinger_csindex",
+        "peUrl": "https://www.lixinger.com/equity/index/detail/csi/930955/930955/fundamental/valuation/pe-ttm?metrics-type=mcw",
         "csindexSymbol": "930955",
-        "sourceLabel": "中证指数官网指数估值",
-        "sourceQuality": "红利低波100 使用中证指数官网最近估值数据；若官网仅提供近期序列，历史分位代表可取数据区间内的位置。",
+        "lixingerSymbol": "930955",
+        "sourceLabel": "理杏仁开放平台指数估值 / 中证指数官网备用",
+        "sourceQuality": "红利低波100 优先使用理杏仁开放平台 PE_TTM 历史序列；若未配置 LIXINGER_TOKEN，仅能回退中证指数官网近期估值，且不会用短序列计算长期分位。",
     },
 }
 
@@ -3290,8 +3291,73 @@ def load_csindex_recent_pe_points(symbol: str) -> list[dict]:
     return sorted(points, key=lambda item: item["date"])
 
 
+def extract_lixinger_pe_value(row: dict) -> float:
+    pe_ttm = row.get("pe_ttm")
+    if isinstance(pe_ttm, dict):
+        for key in ["weightedAvg", "mcw", "latestVal", "avg", "median"]:
+            value = finite_float(pe_ttm.get(key))
+            if value > 0:
+                return value
+    return finite_float(row.get("pe_ttm"))
+
+
+def load_lixinger_index_pe_points(symbol: str, start_date: str = "2017-05-26") -> list[dict]:
+    token = os.getenv("LIXINGER_TOKEN", "").strip()
+    if not token:
+        return []
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching Lixinger index PE history, symbol={symbol}")
+        end_date = datetime.now().date().isoformat()
+        payload = {
+            "token": token,
+            "startDate": start_date,
+            "endDate": end_date,
+            "stockCodes": [symbol],
+            "metrics": ["pe_ttm"],
+        }
+        with temporary_disable_proxy_env():
+            response = requests.post(
+                "https://www.lixinger.com/api/open/a/indice/fundamental-info",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict) and data.get("error"):
+            raise ValueError(str(data.get("error")))
+        if not isinstance(data, list):
+            raise ValueError("Lixinger returned non-list response.")
+        return pd.DataFrame(data)
+
+    try:
+        df = get_ak_dataframe_cached(("lixinger_index_pe", symbol, start_date), fetch)
+    except Exception as exc:
+        print(f"[WARN] Lixinger index PE unavailable, symbol={symbol}: {exc}")
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    points: list[dict] = []
+    for row in df.to_dict(orient="records"):
+        date = pd.to_datetime(row.get("date"), errors="coerce")
+        pe = extract_lixinger_pe_value(row)
+        if pd.notna(date) and pe > 0:
+            points.append({"date": date.date().isoformat(), "pe": round(pe, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
 def load_china_index_pe_points(index_code: str) -> list[dict]:
     config = MARKET_INDEX_CONFIG[index_code]
+    if index_code == "dividend_low_vol_100":
+        points = load_lixinger_index_pe_points(config["lixingerSymbol"])
+        if points:
+            return points
+        return load_csindex_recent_pe_points(config["csindexSymbol"])
+
     symbol = config["leguleguSymbol"]
     try:
         print(f"[INFO] Fetching China index PE history from Legulegu, symbol={symbol}")
@@ -3426,7 +3492,7 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
         if code in {"csi300", "csi500"}:
             pe_loader = lambda: load_china_index_pe_points(code)
         elif code == "dividend_low_vol_100":
-            pe_loader = lambda: load_csindex_recent_pe_points(config["csindexSymbol"])
+            pe_loader = lambda: load_china_index_pe_points(code)
         else:
             pe_loader = load_nasdaq100_pe_points if code == "nasdaq100" else load_sp500_pe_points
         pe_future = executor.submit(pe_loader)
@@ -3506,7 +3572,7 @@ def ensure_market_index_history_span(index_code: str, years: int, pe_points: lis
     required_days = years * 365 * 0.7
     if span_days < required_days:
         raise ValueError(
-            f"{index_code} PE 历史跨度仅 {span_days} 天，不能当作 {years} 年历史分位；请刷新乐咕乐股历史源。"
+            f"{index_code} PE 历史跨度仅 {span_days} 天，不能当作 {years} 年历史分位；请配置长历史估值源或刷新数据。"
         )
 
 
