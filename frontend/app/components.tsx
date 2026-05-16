@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode, RefObject } from "react";
 
 type QueryBarProps = {
@@ -98,10 +99,10 @@ export function AppShell({ active, children }: AppShellProps) {
   return (
     <main className="app-shell">
       <aside className="app-sidebar" aria-label="主导航">
-        <a className="sidebar-brand" href="/">
+        <Link className="sidebar-brand" href="/">
           <span>VC</span>
           <strong>ValueCompass</strong>
-        </a>
+        </Link>
 
         <nav className="sidebar-nav">
           {NAV_ITEMS.map((item) => {
@@ -118,9 +119,9 @@ export function AppShell({ active, children }: AppShellProps) {
             );
 
             return item.enabled ? (
-              <a key={item.id} className={className} href={item.href} aria-current={isActive ? "page" : undefined}>
+              <Link key={item.id} className={className} href={item.href} aria-current={isActive ? "page" : undefined}>
                 {content}
-              </a>
+              </Link>
             ) : (
               <span key={item.id} className={className} aria-disabled="true">
                 {content}
