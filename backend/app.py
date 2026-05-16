@@ -27,6 +27,11 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 try:
+    from .industry.service import IndustryDataDeps, build_industry_data_payload as build_industry_data_payload_from_service
+except ImportError:
+    from industry.service import IndustryDataDeps, build_industry_data_payload as build_industry_data_payload_from_service
+
+try:
     from pypdf import PdfReader
 except ImportError:
     bundled_python_packages = r"C:\Users\1\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\Lib\site-packages"
@@ -68,13 +73,25 @@ AK_DATA_CACHE: dict[tuple[object, ...], tuple[float, pd.DataFrame]] = {}
 
 
 def get_frontend_file(path: str) -> Path | None:
-    candidate = (FRONTEND_OUT_DIR / path).resolve()
-    try:
-        candidate.relative_to(FRONTEND_OUT_DIR.resolve())
-    except ValueError:
-        return None
+    frontend_root = FRONTEND_OUT_DIR.resolve()
+    requested_path = path.strip("/")
+    candidates = [
+        FRONTEND_OUT_DIR / requested_path,
+        FRONTEND_OUT_DIR / f"{requested_path}.html",
+        FRONTEND_OUT_DIR / requested_path / "index.html",
+    ]
 
-    return candidate if candidate.is_file() else None
+    for candidate_path in candidates:
+        candidate = candidate_path.resolve()
+        try:
+            candidate.relative_to(frontend_root)
+        except ValueError:
+            continue
+
+        if candidate.is_file():
+            return candidate
+
+    return None
 
 AI_ANALYSIS_SYSTEM_PROMPT = """
 你是一名A股财报分析助手。
@@ -306,6 +323,70 @@ DRIVER_MODEL_REGISTRY: dict[str, dict] = {
 }
 
 KNOWN_DRIVER_MODELS = list(DRIVER_MODEL_REGISTRY.keys())
+
+COMMODITY_FUTURES_SYMBOLS: dict[str, dict[str, str]] = {
+    "CU": {"name": "铜", "unit": "元/吨"},
+    "AL": {"name": "铝", "unit": "元/吨"},
+    "ZN": {"name": "锌", "unit": "元/吨"},
+    "PB": {"name": "铅", "unit": "元/吨"},
+    "NI": {"name": "镍", "unit": "元/吨"},
+    "SN": {"name": "锡", "unit": "元/吨"},
+    "AU": {"name": "黄金", "unit": "元/克"},
+    "AG": {"name": "白银", "unit": "元/千克"},
+    "RB": {"name": "螺纹钢", "unit": "元/吨"},
+    "HC": {"name": "热轧卷板", "unit": "元/吨"},
+    "WR": {"name": "线材", "unit": "元/吨"},
+    "SS": {"name": "不锈钢", "unit": "元/吨"},
+    "FU": {"name": "燃料油", "unit": "元/吨"},
+    "BU": {"name": "沥青", "unit": "元/吨"},
+    "RU": {"name": "天然橡胶", "unit": "元/吨"},
+    "SP": {"name": "纸浆", "unit": "元/吨"},
+    "BR": {"name": "丁二烯橡胶", "unit": "元/吨"},
+    "SC": {"name": "原油", "unit": "元/桶"},
+    "NR": {"name": "20号胶", "unit": "元/吨"},
+    "LU": {"name": "低硫燃料油", "unit": "元/吨"},
+    "BC": {"name": "国际铜", "unit": "元/吨"},
+    "AO": {"name": "氧化铝", "unit": "元/吨"},
+    "A": {"name": "豆一", "unit": "元/吨"},
+    "B": {"name": "豆二", "unit": "元/吨"},
+    "M": {"name": "豆粕", "unit": "元/吨"},
+    "Y": {"name": "豆油", "unit": "元/吨"},
+    "P": {"name": "棕榈油", "unit": "元/吨"},
+    "C": {"name": "玉米", "unit": "元/吨"},
+    "CS": {"name": "玉米淀粉", "unit": "元/吨"},
+    "JD": {"name": "鸡蛋", "unit": "元/500千克"},
+    "L": {"name": "聚乙烯", "unit": "元/吨"},
+    "V": {"name": "PVC", "unit": "元/吨"},
+    "PP": {"name": "聚丙烯", "unit": "元/吨"},
+    "J": {"name": "焦炭", "unit": "元/吨"},
+    "JM": {"name": "焦煤", "unit": "元/吨"},
+    "I": {"name": "铁矿石", "unit": "元/吨"},
+    "EG": {"name": "乙二醇", "unit": "元/吨"},
+    "EB": {"name": "苯乙烯", "unit": "元/吨"},
+    "PG": {"name": "液化石油气", "unit": "元/吨"},
+    "LH": {"name": "生猪", "unit": "元/吨"},
+    "CF": {"name": "棉花", "unit": "元/吨"},
+    "SR": {"name": "白糖", "unit": "元/吨"},
+    "TA": {"name": "PTA", "unit": "元/吨"},
+    "OI": {"name": "菜籽油", "unit": "元/吨"},
+    "MA": {"name": "甲醇", "unit": "元/吨"},
+    "FG": {"name": "玻璃", "unit": "元/吨"},
+    "RM": {"name": "菜籽粕", "unit": "元/吨"},
+    "SF": {"name": "硅铁", "unit": "元/吨"},
+    "SM": {"name": "锰硅", "unit": "元/吨"},
+    "AP": {"name": "苹果", "unit": "元/吨"},
+    "UR": {"name": "尿素", "unit": "元/吨"},
+    "CJ": {"name": "红枣", "unit": "元/吨"},
+    "SA": {"name": "纯碱", "unit": "元/吨"},
+    "PK": {"name": "花生", "unit": "元/吨"},
+    "PF": {"name": "短纤", "unit": "元/吨"},
+    "PX": {"name": "对二甲苯", "unit": "元/吨"},
+    "SH": {"name": "烧碱", "unit": "元/吨"},
+    "SI": {"name": "工业硅", "unit": "元/吨"},
+    "LC": {"name": "碳酸锂", "unit": "元/吨"},
+}
+
+DEFAULT_COMMODITY_SYMBOLS = list(COMMODITY_FUTURES_SYMBOLS.keys())
 
 MARKET_INDEX_CONFIG: dict[str, dict] = {
     "sp500": {
@@ -1738,6 +1819,289 @@ def find_main_business_item(main_business_payload: dict, keywords: list[str]) ->
     return None
 
 
+def find_product_business_item(main_business_payload: dict, segment_name: str = "") -> dict | None:
+    items = main_business_payload.get("items") if isinstance(main_business_payload, dict) else []
+    if not isinstance(items, list):
+        return None
+
+    segment_text = str(segment_name or "")
+    if segment_text:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get("itemName") or "")
+            if (
+                item_name
+                and item_name in segment_text
+                and "补充" not in item_name
+                and finite_float(item.get("revenue")) > 0
+                and finite_float(item.get("cost")) > 0
+            ):
+                return item
+
+    product_items = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and "产品" in str(item.get("categoryType") or "")
+        and "补充" not in str(item.get("itemName") or "")
+        and finite_float(item.get("revenue")) > 0
+        and finite_float(item.get("cost")) > 0
+    ]
+    if segment_text:
+        for item in product_items:
+            item_name = str(item.get("itemName") or "")
+            if item_name and (item_name in segment_text or segment_text in item_name):
+                return item
+            if any(keyword in segment_text for keyword in ["茅台", "白酒", "核心产品"]) and any(
+                keyword in item_name for keyword in ["茅台", "酒"]
+            ):
+                return item
+    if product_items:
+        return max(product_items, key=lambda item: finite_float(item.get("revenue")))
+
+    usable_items = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and "补充" not in str(item.get("itemName") or "")
+        and finite_float(item.get("revenue")) > 0
+        and finite_float(item.get("cost")) > 0
+    ]
+    return max(usable_items, key=lambda item: finite_float(item.get("revenue"))) if usable_items else None
+
+
+def extract_baijiu_operating_volume(report_payload: dict) -> dict | None:
+    text = str(report_payload.get("textExcerpt") or "")
+    if not text:
+        return None
+
+    sales_match = re.search(
+        r"酒类\s+吨\s+(?P<production>[0-9,.]+)\s+(?P<sales>[0-9,.]+)\s+(?P<inventory>[0-9,.]+)",
+        text,
+    )
+    capacity_match = re.search(
+        r"茅台酒制酒车间\s+(?P<design>[0-9,.]+)\s+(?P<actual>[0-9,.]+)",
+        text,
+    )
+    if not sales_match and not capacity_match:
+        return None
+
+    payload: dict[str, Any] = {
+        "basis": "reported_wine_sales_volume",
+        "label": "酒类披露销量",
+        "source": "年报酒制造行业经营性信息",
+    }
+    if sales_match:
+        production = parse_report_number_to_float(sales_match.group("production")) or 0
+        sales = parse_report_number_to_float(sales_match.group("sales")) or 0
+        inventory = parse_report_number_to_float(sales_match.group("inventory")) or 0
+        payload.update(
+            {
+                "productionTon": round(production, 2),
+                "salesTon": round(sales, 2),
+                "inventoryTon": round(inventory, 2),
+                "volumeTon": round(sales, 2),
+                "volumeWanTon": round(sales / 10000, 4),
+            }
+        )
+    if capacity_match:
+        design = parse_report_number_to_float(capacity_match.group("design")) or 0
+        actual = parse_report_number_to_float(capacity_match.group("actual")) or 0
+        payload.update(
+            {
+                "moutaiDesignCapacityTon": round(design, 2),
+                "moutaiActualBaseWineOutputTon": round(actual, 2),
+            }
+        )
+        if not sales_match:
+            payload.update(
+                {
+                    "basis": "reported_moutai_base_wine_output",
+                    "label": "茅台酒基酒实际产能",
+                    "volumeTon": round(actual, 2),
+                    "volumeWanTon": round(actual / 10000, 4),
+                }
+            )
+    return payload
+
+
+def extract_baijiu_cost_components(report_payload: dict) -> list[dict]:
+    text = str(report_payload.get("textExcerpt") or "")
+    components = []
+    for name in ["直接材料", "直接人工", "制造费用", "燃料动力", "运输费"]:
+        match = re.search(
+            rf"{name}\s+(?P<amount>[0-9,.]+)\s+(?P<ratio>[0-9,.]+)\s+(?P<last>[0-9,.]+)\s+(?P<last_ratio>[0-9,.]+)\s+(?P<change>[0-9,.\-]+)",
+            text,
+        )
+        if not match:
+            continue
+        components.append(
+            {
+                "name": name,
+                "amountYuan": parse_report_number_to_float(match.group("amount")),
+                "costRatioPct": parse_report_number_to_float(match.group("ratio")),
+                "lastYearAmountYuan": parse_report_number_to_float(match.group("last")),
+                "lastYearCostRatioPct": parse_report_number_to_float(match.group("last_ratio")),
+                "changePct": parse_report_number_to_float(match.group("change")),
+            }
+        )
+    return components
+
+
+def build_consumer_product_profit_calculation(
+    stock: str,
+    main_business_payload: dict,
+    annual_report_payload: dict,
+    segment_name: str = "",
+) -> dict | None:
+    business_item = find_product_business_item(main_business_payload, segment_name=segment_name)
+    if not business_item:
+        return None
+
+    revenue_yi = finite_float(business_item.get("revenue"))
+    cost_yi = finite_float(business_item.get("cost"))
+    profit_yi = finite_float(business_item.get("profit"))
+    if revenue_yi <= 0 or cost_yi <= 0:
+        return None
+
+    volume_payload = extract_baijiu_operating_volume(annual_report_payload)
+    volume_ton = finite_float((volume_payload or {}).get("volumeTon"))
+    if volume_ton <= 0:
+        return None
+
+    report_year_match = re.search(r"(20\d{2})", str(business_item.get("reportDate") or ""))
+    report_year = int(report_year_match.group(1)) if report_year_match else extract_annual_report_year(annual_report_payload)
+    revenue_ratio = finite_float(business_item.get("revenueRatio"), 1.0)
+    estimated_product_volume_ton = max(volume_ton * revenue_ratio, 1.0)
+    implied_selling_price = revenue_yi * YI / estimated_product_volume_ton
+    implied_cost_per_ton = cost_yi * YI / estimated_product_volume_ton
+    implied_gross_profit_per_ton = profit_yi * YI / estimated_product_volume_ton if profit_yi > 0 else implied_selling_price - implied_cost_per_ton
+
+    product_profit_items = [
+        finite_float(item.get("profit"))
+        for item in main_business_payload.get("items", [])
+        if isinstance(item, dict) and "产品" in str(item.get("categoryType") or "") and finite_float(item.get("profit")) > 0
+    ]
+    gross_profit_total_yi = sum(product_profit_items)
+    net_profit_yi = extract_report_net_profit_yi(annual_report_payload)
+    net_bridge_ratio = None
+    if net_profit_yi and gross_profit_total_yi > 0:
+        net_bridge_ratio = max(0.0, min(net_profit_yi / gross_profit_total_yi, 1.0))
+
+    cost_components = extract_baijiu_cost_components(annual_report_payload)
+    forecast_scenarios = [
+        build_profit_forecast_scenario(
+            "保守",
+            implied_selling_price * 0.98,
+            estimated_product_volume_ton * 0.98,
+            implied_cost_per_ton * 1.03,
+            profit_yi,
+            net_bridge_ratio,
+            "售价下调2%，销量下调2%，单位成本上调3%，用于观察价格和成本压力。",
+        ),
+        build_profit_forecast_scenario(
+            "中性",
+            implied_selling_price,
+            estimated_product_volume_ton,
+            implied_cost_per_ton * 1.01,
+            profit_yi,
+            net_bridge_ratio,
+            "沿用披露分部收入与估算销量，单位成本小幅上调1%。",
+        ),
+        build_profit_forecast_scenario(
+            "乐观",
+            implied_selling_price * 1.02,
+            estimated_product_volume_ton * 1.02,
+            implied_cost_per_ton,
+            profit_yi,
+            net_bridge_ratio,
+            "售价提升2%，销量提升2%，单位成本维持年报水平。",
+        ),
+    ]
+    neutral_forecast = next(item for item in forecast_scenarios if item["name"] == "中性")
+
+    assumptions = [
+        "年报披露了产品分部收入、成本和毛利，因此可先形成分部毛利计算。",
+        "年报披露的是酒类整体生产量、销售量、库存量；未直接披露茅台酒单品销售量，因此按收入占比分摊酒类销量作为估算口径。",
+        "茅台酒基酒实际产能可用于判断供给约束，但它不是当期瓶装酒销量，不能直接等同为销量。",
+        "成本构成目前是酒类整体口径，不是茅台酒单品口径。",
+    ]
+
+    prediction_plan = {
+        "headline": "未来12个月售价、销量、成本敏感性预测",
+        "logic": [
+            f"先锁定最新年报中“{business_item.get('itemName')}”分部收入、成本和毛利。",
+            "再用酒类披露销售量和该产品收入占比估算产品销量，形成 ASP 与单位成本的可计算口径。",
+            "最后用售价、销量、单位成本三档假设，估算未来12个月毛利区间。",
+        ],
+        "evidence": [
+            f"{business_item.get('reportDate')} {business_item.get('itemName')}收入 {round(revenue_yi, 2)} 亿元、成本 {round(cost_yi, 2)} 亿元、毛利 {round(profit_yi, 2)} 亿元。",
+            f"年报披露酒类销售量 {round(volume_ton, 2)} 吨，按收入占比估算该分部销量 {round(estimated_product_volume_ton, 2)} 吨。",
+            f"估算 ASP {round(implied_selling_price, 2)} 元/吨，单位成本 {round(implied_cost_per_ton, 2)} 元/吨。",
+        ],
+        "confidence": "medium-low",
+        "watchItems": ["茅台酒批价", "直销占比", "经销商库存", "合同负债", "酒类销量", "直接材料/人工成本"],
+        "risks": [
+            "销量是估算口径，不是公司直接披露的茅台酒单品销量。",
+            "吨价不能直接等同瓶价，吨与瓶之间还需要酒度、规格和产品结构换算。",
+            "批价、渠道库存和真实终端动销仍需第三方或渠道数据库。",
+        ],
+    }
+
+    return {
+        "status": "calculated",
+        "model": "generic_volume_price",
+        "segmentName": str(business_item.get("itemName") or segment_name or "主营产品"),
+        "reportYear": report_year,
+        "sourceData": {
+            "businessItem": {
+                "itemName": business_item.get("itemName"),
+                "reportDate": business_item.get("reportDate"),
+                "revenueYi": round(revenue_yi, 2),
+                "costYi": round(cost_yi, 2),
+                "grossProfitYi": round(profit_yi, 2),
+                "grossMargin": business_item.get("grossMargin"),
+            },
+            "reportedVolumeOrCapacity": volume_payload,
+            "baselineMarketPrice": {
+                "year": report_year,
+                "averageClosePrice": round(implied_selling_price, 2),
+                "unit": "元/吨",
+                "source": "年报分部收入/估算销量",
+            },
+            "latestMarketPrice": None,
+            "ytdMarketPrice": None,
+            "recent90dMarketPrice": None,
+            "netProfitYi": net_profit_yi,
+            "costComponents": cost_components,
+        },
+        "derivedInputs": {
+            "revenueImpliedSalesVolumeWanTon": round(estimated_product_volume_ton / 10000, 4),
+            "conservativeVolumeWanTon": round(estimated_product_volume_ton / 10000, 4),
+            "volumeBasis": "reported_total_wine_sales_allocated_by_revenue_ratio",
+            "impliedSellingPricePerTon": round(implied_selling_price, 2),
+            "impliedCostPerTon": round(implied_cost_per_ton, 2),
+            "impliedGrossProfitPerTon": round(implied_gross_profit_per_ton, 2),
+            "netProfitToGrossProfitRatio": round(net_bridge_ratio, 4) if net_bridge_ratio is not None else None,
+        },
+        "result": {
+            "baselineGrossProfitYi": round(profit_yi, 2),
+            "estimatedGrossProfitYi": neutral_forecast["grossProfitYi"],
+            "estimatedGrossProfitDeltaYi": neutral_forecast["grossProfitDeltaYi"],
+            "estimatedNetProfitYi": neutral_forecast["netProfitYi"],
+            "currentPriceResetGrossProfitYi": round(profit_yi, 2),
+            "currentPriceResetGrossProfitDeltaYi": 0,
+            "currentPriceResetNetProfitYi": round(profit_yi * net_bridge_ratio, 2) if net_bridge_ratio is not None else None,
+            "forecastHorizon": "未来12个月",
+            "formula": "未来12个月毛利 = 情景销量 × (情景ASP - 情景单位成本)",
+        },
+        "forecast12m": forecast_scenarios,
+        "assumptions": assumptions,
+        "predictionPlan": prediction_plan,
+    }
+
+
 def load_aluminum_latest_price() -> dict | None:
     def fetch() -> pd.DataFrame:
         print("[INFO] Fetching aluminum futures spot, symbol=AL0")
@@ -1829,6 +2193,489 @@ def load_aluminum_price_window(start_date: datetime, end_date: datetime, label: 
     except Exception as exc:
         print(f"[WARN] Aluminum price window unavailable, label={label}: {exc}")
         return None
+
+
+def normalize_commodity_symbols(symbols: str | None, max_symbols: int = 80) -> list[str]:
+    text = str(symbols or "").strip()
+    if not text or text.lower() in {"all", "全部", "*"}:
+        return DEFAULT_COMMODITY_SYMBOLS[:max_symbols]
+
+    normalized: list[str] = []
+    for raw_symbol in re.split(r"[,，\s]+", text):
+        symbol = raw_symbol.strip().upper()
+        if not symbol:
+            continue
+        symbol = re.sub(r"\d+$", "", symbol)
+        if symbol and symbol not in normalized:
+            normalized.append(symbol)
+
+    return normalized[:max_symbols] or DEFAULT_COMMODITY_SYMBOLS[:max_symbols]
+
+
+def get_commodity_meta(symbol: str) -> dict[str, str]:
+    return COMMODITY_FUTURES_SYMBOLS.get(symbol, {"name": symbol, "unit": ""})
+
+
+def normalize_commodity_days(days: str | None, default: int = 30) -> int:
+    try:
+        value = int(str(days or default).strip())
+    except ValueError:
+        value = default
+    return max(1, min(value, 365))
+
+
+def load_commodity_realtime_prices(symbols: list[str]) -> list[dict]:
+    if not symbols:
+        return []
+
+    futures_symbols = [f"{symbol}0" for symbol in symbols]
+    symbol_query = ",".join(futures_symbols)
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching commodity realtime futures, symbols={symbol_query}")
+        with temporary_disable_proxy_env():
+            return ak.futures_zh_spot(symbol=symbol_query, market="CF", adjust="0")
+
+    try:
+        df = get_ak_dataframe_cached(("commodity_realtime_futures", symbol_query), fetch)
+    except Exception as exc:
+        print(f"[WARN] Commodity realtime futures unavailable, symbols={symbol_query}: {exc}")
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    items: list[dict] = []
+    for index, row in df.reset_index(drop=True).iterrows():
+        requested_symbol = symbols[index] if index < len(symbols) else ""
+        meta = get_commodity_meta(requested_symbol)
+        current_price = finite_float(row.get("current_price"))
+        if current_price <= 0:
+            current_price = finite_float(row.get("last_settle_price"))
+        if current_price <= 0:
+            continue
+        items.append(
+            {
+                "symbol": requested_symbol,
+                "contract": f"{requested_symbol}0" if requested_symbol else "",
+                "name": str(row.get("symbol") or meta["name"]),
+                "price": round(current_price, 4),
+                "open": round(finite_float(row.get("open")), 4),
+                "high": round(finite_float(row.get("high")), 4),
+                "low": round(finite_float(row.get("low")), 4),
+                "lastSettlePrice": round(finite_float(row.get("last_settle_price")), 4),
+                "volume": round(finite_float(row.get("volume")), 4),
+                "hold": round(finite_float(row.get("hold")), 4),
+                "unit": meta.get("unit", ""),
+                "time": str(row.get("time") or ""),
+                "source": "akshare.futures_zh_spot(Sina)",
+                "fetchedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    return items
+
+
+def load_commodity_spot_basis_series(symbols: list[str], start_date: datetime, end_date: datetime) -> list[dict]:
+    if not symbols:
+        return []
+
+    start = start_date.strftime("%Y%m%d")
+    end = end_date.strftime("%Y%m%d")
+    vars_list = [symbol for symbol in symbols if symbol]
+    vars_key = ",".join(vars_list)
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching commodity spot basis, symbols={vars_key}, start={start}, end={end}")
+        with temporary_disable_proxy_env():
+            return ak.futures_spot_price_daily(start_day=start, end_day=end, vars_list=vars_list)
+
+    try:
+        df = get_ak_dataframe_cached(("commodity_spot_basis_daily", vars_key, start, end), fetch)
+    except Exception as exc:
+        print(f"[WARN] Commodity spot basis unavailable, symbols={vars_key}: {exc}")
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    records: list[dict] = []
+    for _, row in df.iterrows():
+        symbol = str(row.get("symbol") or "").upper()
+        meta = get_commodity_meta(symbol)
+        records.append(
+            {
+                "date": str(row.get("date") or ""),
+                "symbol": symbol,
+                "name": meta.get("name", symbol),
+                "spotPrice": round(finite_float(row.get("spot_price")), 4),
+                "nearContract": str(row.get("near_contract") or ""),
+                "nearContractPrice": round(finite_float(row.get("near_contract_price")), 4),
+                "dominantContract": str(row.get("dominant_contract") or ""),
+                "dominantContractPrice": round(finite_float(row.get("dominant_contract_price")), 4),
+                "nearBasis": round(finite_float(row.get("near_basis")), 4),
+                "dominantBasis": round(finite_float(row.get("dom_basis")), 4),
+                "nearBasisRate": round(finite_float(row.get("near_basis_rate")), 6),
+                "dominantBasisRate": round(finite_float(row.get("dom_basis_rate")), 6),
+                "unit": meta.get("unit", ""),
+                "source": "akshare.futures_spot_price_daily(100ppi)",
+            }
+        )
+    return records
+
+
+def build_commodity_prices_payload(symbols: str | None = None, days: str | None = None) -> dict:
+    normalized_symbols = normalize_commodity_symbols(symbols)
+    normalized_days = normalize_commodity_days(days)
+    today = datetime.now(timezone.utc)
+    start_date = today - timedelta(days=normalized_days)
+
+    realtime = load_commodity_realtime_prices(normalized_symbols)
+    spot_basis_series = load_commodity_spot_basis_series(normalized_symbols, start_date, today)
+
+    latest_spot_basis_by_symbol: dict[str, dict] = {}
+    for item in spot_basis_series:
+        symbol = item.get("symbol")
+        if symbol:
+            latest_spot_basis_by_symbol[symbol] = item
+
+    realtime_symbols = {item.get("symbol") for item in realtime}
+    spot_basis_symbols = set(latest_spot_basis_by_symbol.keys())
+    data_gaps = []
+    for symbol in normalized_symbols:
+        missing_parts = []
+        if symbol not in realtime_symbols:
+            missing_parts.append("实时连续期货")
+        if symbol not in spot_basis_symbols:
+            missing_parts.append("现货价/基差")
+        if missing_parts:
+            data_gaps.append(
+                {
+                    "symbol": symbol,
+                    "name": get_commodity_meta(symbol).get("name", symbol),
+                    "missing": missing_parts,
+                }
+            )
+
+    status = "ok" if not data_gaps else "partial" if realtime or spot_basis_series else "empty"
+    return {
+        "tool": "commodity_prices",
+        "status": status,
+        "symbols": normalized_symbols,
+        "days": normalized_days,
+        "metrics": {
+            "realtimeFutures": realtime,
+            "latestSpotBasis": list(latest_spot_basis_by_symbol.values()),
+            "spotBasisSeries": spot_basis_series,
+        },
+        "source": [
+            "akshare.futures_zh_spot(Sina)",
+            "akshare.futures_spot_price_daily(100ppi)",
+        ],
+        "dataGaps": data_gaps,
+        "fetchedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def json_safe_value(value: object) -> object:
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return value.isoformat()
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return round(value, 6)
+    if isinstance(value, (int, str, bool)) or value is None:
+        return value
+    if pd.isna(value):
+        return None
+    return str(value)
+
+
+def dataframe_preview(df: pd.DataFrame, limit: int = 12) -> dict:
+    if df is None or df.empty:
+        return {"columns": [], "rows": []}
+    preview_df = df.tail(limit) if len(df) > limit else df
+    rows = [
+        {str(key): json_safe_value(value) for key, value in row.items()}
+        for row in preview_df.to_dict(orient="records")
+    ]
+    return {
+        "columns": [str(column) for column in df.columns],
+        "rows": rows,
+        "rowCount": int(len(df)),
+    }
+
+
+def safe_ak_table(tool_key: str, builder: Callable[[], pd.DataFrame], limit: int = 12) -> dict:
+    try:
+        df = get_ak_dataframe_cached((tool_key,), builder)
+        return {
+            "status": "ok" if df is not None and not df.empty else "empty",
+            **dataframe_preview(df, limit=limit),
+        }
+    except Exception as exc:
+        print(f"[WARN] Industry table unavailable, key={tool_key}: {exc}")
+        return {"status": "error", "error": str(exc), "columns": [], "rows": []}
+
+
+def extract_report_operating_metrics(report_text: str, metric_patterns: dict[str, list[str]]) -> dict[str, list[dict]]:
+    metrics: dict[str, list[dict]] = {}
+    text = str(report_text or "")
+    compact_text = " ".join(text.split())
+    for metric, patterns in metric_patterns.items():
+        matches: list[dict] = []
+        for pattern in patterns:
+            for match in re.finditer(pattern, compact_text, flags=re.IGNORECASE):
+                value = parse_report_number_to_float(match.group("value")) if "value" in match.groupdict() else None
+                unit = match.group("unit") if "unit" in match.groupdict() else ""
+                start, end = match.span()
+                matches.append(
+                    {
+                        "value": value,
+                        "unit": unit,
+                        "sourceText": compact_text[max(0, start - 80) : min(len(compact_text), end + 120)],
+                    }
+                )
+                if len(matches) >= 8:
+                    break
+            if len(matches) >= 8:
+                break
+        metrics[metric] = matches
+    return metrics
+
+
+def summarize_business_items_for_operating_metrics(main_business_payload: dict) -> list[dict]:
+    items = main_business_payload.get("items") if isinstance(main_business_payload, dict) else []
+    if not isinstance(items, list):
+        return []
+    summarized = []
+    for item in items[:20]:
+        if not isinstance(item, dict):
+            continue
+        summarized.append(
+            {
+                "categoryType": item.get("categoryType"),
+                "itemName": item.get("itemName"),
+                "revenue": item.get("revenue"),
+                "cost": item.get("cost"),
+                "profit": item.get("profit"),
+                "grossMargin": item.get("grossMargin"),
+                "revenueRatio": item.get("revenueRatio"),
+            }
+        )
+    return summarized
+
+
+def build_baijiu_operating_metrics(stock: str, main_business_payload: dict, annual_report_payload: dict) -> dict:
+    report_text = str(annual_report_payload.get("textExcerpt") or "")
+    metric_patterns = {
+        "salesVolumeOrProduction": [
+            r"(?P<label>销量|销售量|产量|生产量|基酒产量)[^0-9]{0,20}(?P<value>[0-9,.]+)\s*(?P<unit>吨|万吨|千升|万千升|瓶|万瓶)",
+            r"(?P<value>[0-9,.]+)\s*(?P<unit>吨|万吨|千升|万千升|瓶|万瓶)[^。]{0,20}(?P<label>销量|销售量|产量|生产量|基酒产量)",
+        ],
+        "dealerOrChannel": [
+            r"(?P<label>经销商|批发代理|直销|渠道)[^。]{0,40}(?P<value>[0-9,.]+)\s*(?P<unit>家|%|％|亿元|亿)",
+        ],
+        "inventoryOrContractLiability": [
+            r"(?P<label>库存|合同负债|预收款|预收账款)[^。]{0,40}(?P<value>[0-9,.]+)\s*(?P<unit>亿元|亿|万元|万)",
+        ],
+        "expenseRate": [
+            r"(?P<label>销售费用率|管理费用率|研发费用率|财务费用率)[^0-9]{0,20}(?P<value>[0-9,.]+)\s*(?P<unit>%|％)",
+        ],
+    }
+    extracted = extract_report_operating_metrics(report_text, metric_patterns)
+    data_gaps = []
+    if not extracted["salesVolumeOrProduction"]:
+        data_gaps.append("缺少稳定的销量/产量披露，ASP 和单位成本只能在披露量存在时反推。")
+    data_gaps.extend(
+        [
+            "未接入第三方批价、渠道动销和经销商库存数据库。",
+            "费用率目前只能从公司整体财报或年报文本抽取，尚不能稳定按产品/渠道拆分。",
+        ]
+    )
+    return {
+        "tool": "baijiu_operating_metrics",
+        "status": "partial",
+        "stock": stock,
+        "metrics": {
+            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
+            "reportExtractedMetrics": extracted,
+        },
+        "source": ["巨潮年报文本", "东方财富主营构成/AKShare"],
+        "dataGaps": data_gaps,
+    }
+
+
+def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, annual_report_payload: dict) -> dict:
+    commodity_symbols = "AL,AO,CU,ZN,PB,NI,SN,SC,FU,BU,UR,SA,MA,FG,TA,EG,EB,PP,L,V,PX,SH,LC,I,J,JM"
+    report_text = str(annual_report_payload.get("textExcerpt") or "")
+    metric_patterns = {
+        "productionOrSales": [
+            r"(?P<label>产量|销量|生产量|销售量|产能)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>吨|万吨|千吨|万吨/年)",
+            r"(?P<value>[0-9,.]+)\s*(?P<unit>吨|万吨|千吨|万吨/年)[^。]{0,30}(?P<label>产量|销量|生产量|销售量|产能)",
+        ],
+        "unitCostOrPrice": [
+            r"(?P<label>单位成本|单吨成本|平均售价|销售均价)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>元/吨|元)",
+        ],
+    }
+    return {
+        "tool": "nonferrous_chemical_metrics",
+        "status": "partial",
+        "stock": stock,
+        "metrics": {
+            "commodityPrices": build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
+            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
+            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
+        },
+        "source": ["AKShare 商品期货/现货基差", "巨潮年报文本", "东方财富主营构成/AKShare"],
+        "dataGaps": ["电力成本、阳极、石油焦、煤沥青等专用成本项尚未逐项接入；产品-原料价差序列还未按具体行业模型封装。"],
+    }
+
+
+def build_shipping_metrics(stock: str, main_business_payload: dict, annual_report_payload: dict) -> dict:
+    tables = {
+        "bdi": safe_ak_table("shipping_bdi", lambda: ak.macro_shipping_bdi()),
+        "bci": safe_ak_table("shipping_bci", lambda: ak.macro_shipping_bci()),
+        "bpi": safe_ak_table("shipping_bpi", lambda: ak.macro_shipping_bpi()),
+        "bcti": safe_ak_table("shipping_bcti", lambda: ak.macro_shipping_bcti()),
+        "bdti": safe_ak_table("shipping_bdti", lambda: ak.macro_china_bdti_index()),
+        "chinaFreightIndex": safe_ak_table("shipping_china_freight", lambda: ak.macro_china_freight_index()),
+    }
+    report_text = str(annual_report_payload.get("textExcerpt") or "")
+    metric_patterns = {
+        "teuOrThroughput": [
+            r"(?P<label>TEU|箱量|吞吐量|货运量|集装箱运输量)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>万TEU|TEU|万吨|万箱|箱)",
+            r"(?P<value>[0-9,.]+)\s*(?P<unit>万TEU|TEU|万吨|万箱|箱)[^。]{0,30}(?P<label>TEU|箱量|吞吐量|货运量|集装箱运输量)",
+        ],
+        "unitRevenueCost": [
+            r"(?P<label>单箱收入|单箱成本|单箱运费)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>元/TEU|美元/FEU|元|美元)",
+        ],
+    }
+    return {
+        "tool": "shipping_metrics",
+        "status": "partial",
+        "stock": stock,
+        "metrics": {
+            "freightIndices": tables,
+            "fuelPrices": build_commodity_prices_payload(symbols="SC,FU,LU", days="30"),
+            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
+            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
+        },
+        "source": ["AKShare 航运宏观指数", "AKShare 商品价格", "巨潮年报文本"],
+        "dataGaps": ["未接入 SCFI/CCFI 官方逐航线明细、长协运价、船队运力和港口 AIS 拥堵数据。"],
+    }
+
+
+def build_financial_sector_metrics(stock: str, years: int, annual_report_payload: dict | None = None) -> dict:
+    report_text = str((annual_report_payload or {}).get("textExcerpt") or "")
+    metric_patterns = {
+        "bankQuality": [
+            r"(?P<label>净息差|不良贷款率|不良率|拨备覆盖率|资本充足率|核心一级资本充足率)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>%|％|BP|bp)?",
+        ],
+        "aumOrCommission": [
+            r"(?P<label>AUM|资产管理规模|代理买卖证券业务净收入|佣金率|手续费及佣金净收入)[^0-9]{0,40}(?P<value>[0-9,.]+)\s*(?P<unit>亿元|亿|万元|%|％)?",
+        ],
+        "insuranceProfit": [
+            r"(?P<label>承保利润|综合成本率|原保险保费收入|新业务价值)[^0-9]{0,40}(?P<value>[0-9,.]+)\s*(?P<unit>亿元|亿|万元|%|％)?",
+        ],
+    }
+    return {
+        "tool": "financial_sector_metrics",
+        "status": "partial",
+        "stock": stock,
+        "metrics": {
+            "companyFinancialAbstract": safe_ak_table(
+                f"financial_abstract_ths_{stock}",
+                lambda: ak.stock_financial_abstract_ths(symbol=stock, indicator="按报告期"),
+                limit=8,
+            ),
+            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
+            "lpr": safe_ak_table("macro_china_lpr", lambda: ak.macro_china_lpr(), limit=12),
+            "moneySupply": safe_ak_table("macro_china_money_supply", lambda: ak.macro_china_money_supply(), limit=12),
+            "newCredit": safe_ak_table("macro_china_new_financial_credit", lambda: ak.macro_china_new_financial_credit(), limit=12),
+            "insuranceIncome": safe_ak_table("macro_china_insurance_income", lambda: ak.macro_china_insurance_income(), limit=12),
+        },
+        "source": ["AKShare 公司财务指标", "AKShare 宏观利率/保险数据"],
+        "dataGaps": ["净息差、不良率、拨备覆盖率、AUM、佣金率、承保利润等已尝试从年报文本抽取，但尚未接入商业数据库级别的公司维度标准序列。"],
+    }
+
+
+def build_game_internet_metrics(stock: str, main_business_payload: dict, annual_report_payload: dict) -> dict:
+    report_text = str(annual_report_payload.get("textExcerpt") or "")
+    metric_patterns = {
+        "users": [
+            r"(?P<label>DAU|MAU|月活跃用户|日活跃用户|付费用户)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>万|万人|亿|人)",
+        ],
+        "monetization": [
+            r"(?P<label>ARPU|付费率|流水|充值流水|广告收入|买量成本)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>元|万元|亿元|%|％)",
+        ],
+        "licenses": [
+            r"(?P<label>版号|游戏版号|上线|公测)[^。]{0,80}(?P<value>[0-9,.]+)?\s*(?P<unit>款|个)?",
+        ],
+    }
+    return {
+        "tool": "game_internet_metrics",
+        "status": "partial",
+        "stock": stock,
+        "metrics": {
+            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
+            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
+            "movieBoxOfficeProxy": safe_ak_table("movie_boxoffice_realtime", lambda: ak.movie_boxoffice_realtime(), limit=10),
+        },
+        "source": ["巨潮年报文本", "东方财富主营构成/AKShare", "AKShare 电影票房代理数据"],
+        "dataGaps": ["游戏 DAU/MAU、ARPU、买量成本、流水和版号生命周期缺少稳定免费标准源，当前主要依赖公司披露文本。"],
+    }
+
+
+def build_auto_new_energy_metrics(stock: str, main_business_payload: dict, annual_report_payload: dict) -> dict:
+    report_text = str(annual_report_payload.get("textExcerpt") or "")
+    metric_patterns = {
+        "vehicleSales": [
+            r"(?P<label>销量|交付量|产量|出口量)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>辆|万辆|台|万台)",
+            r"(?P<value>[0-9,.]+)\s*(?P<unit>辆|万辆|台|万台)[^。]{0,30}(?P<label>销量|交付量|产量|出口量)",
+        ],
+        "unitEconomics": [
+            r"(?P<label>单车收入|单车毛利|自行车收入|平均售价)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>元|万元|亿元)",
+        ],
+    }
+    return {
+        "tool": "auto_new_energy_metrics",
+        "status": "partial",
+        "stock": stock,
+        "metrics": {
+            "cpcaTotalRetail": safe_ak_table("car_market_total_retail", lambda: ak.car_market_total_cpca(indicator="零售"), limit=12),
+            "cpcaTotalWholesale": safe_ak_table("car_market_total_wholesale", lambda: ak.car_market_total_cpca(indicator="批发"), limit=12),
+            "cpcaTotalExport": safe_ak_table("car_market_total_export", lambda: ak.car_market_total_cpca(indicator="出口"), limit=12),
+            "cpcaNewEnergy": safe_ak_table("car_market_fuel_new_energy", lambda: ak.car_market_fuel_cpca(symbol="整体市场"), limit=12),
+            "batteryMaterials": build_commodity_prices_payload(symbols="LC,NI,CU,AL,SI", days="30"),
+            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
+            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
+        },
+        "source": ["AKShare 乘联会/盖世汽车", "AKShare 商品价格", "巨潮年报文本"],
+        "dataGaps": ["车型结构、单车收入、单车毛利和出口分车型数据尚未按公司维度标准化。"],
+    }
+
+
+def build_industry_data_payload(stock: str, industries: str | None = None, years: str | None = "8") -> dict:
+    payload = build_industry_data_payload_from_service(
+        stock=stock,
+        industries=industries,
+        years=years,
+        deps=IndustryDataDeps(
+            normalize_stock_code=normalize_stock_code,
+            normalize_years=normalize_years,
+            get_main_business_payload=get_main_business_payload_with_cache,
+            get_company_profile_payload=get_company_profile_payload_with_cache,
+            get_latest_report_text_payload=get_latest_report_text_payload_v2,
+            build_baijiu_operating_metrics=build_baijiu_operating_metrics,
+            build_nonferrous_chemical_metrics=build_nonferrous_chemical_metrics,
+            build_shipping_metrics=build_shipping_metrics,
+            build_financial_sector_metrics=build_financial_sector_metrics,
+            build_game_internet_metrics=build_game_internet_metrics,
+            build_auto_new_energy_metrics=build_auto_new_energy_metrics,
+        ),
+    )
+    payload["fetchedAt"] = datetime.now(timezone.utc).isoformat()
+    return payload
 
 
 def build_profit_forecast_scenario(
@@ -2043,15 +2890,26 @@ def attach_profit_driver_calculations(
     segments = payload.get("segments") if isinstance(payload.get("segments"), list) else []
     calculations: list[dict] = []
     for segment in segments:
-        if not isinstance(segment, dict) or segment.get("driverModel") != "aluminum_commodity":
+        if not isinstance(segment, dict):
             continue
         segment_name = str(segment.get("segmentName") or "")
-        segment_calculation = build_aluminum_profit_calculation(
-            stock,
-            main_business_payload,
-            annual_report_payload,
-            segment_name=segment_name,
-        )
+        driver_model = str(segment.get("driverModel") or "")
+        if driver_model == "aluminum_commodity":
+            segment_calculation = build_aluminum_profit_calculation(
+                stock,
+                main_business_payload,
+                annual_report_payload,
+                segment_name=segment_name,
+            )
+        elif driver_model in {"generic_volume_price", "generic_spread"}:
+            segment_calculation = build_consumer_product_profit_calculation(
+                stock,
+                main_business_payload,
+                annual_report_payload,
+                segment_name=segment_name,
+            )
+        else:
+            segment_calculation = None
         if segment_calculation:
             segment["calculation"] = segment_calculation
             segment["dataStatus"] = "calculated"
@@ -2059,7 +2917,10 @@ def attach_profit_driver_calculations(
 
     if calculations:
         payload["calculations"] = calculations
-        payload["dataGaps"] = []
+        payload["dataGaps"] = [
+            "茅台酒单品销量、瓶价和单位成本未由公司直接披露；当前用产品收入/成本和酒类整体销量做估算口径。",
+            "批价、渠道库存、终端动销、分产品费用率仍需要第三方渠道或商业数据库。",
+        ]
     return payload
 
 
@@ -2687,6 +3548,8 @@ def build_health_payload() -> dict:
         "peerCompanies": "/api/peer-companies?stock=600519&limit=6",
         "peTrend": "/api/pe-trend?stock=600519&years=8",
         "profitDriverModel": "/api/profit-driver-model?stock=600519",
+        "commodityPrices": "/api/commodity-prices?symbols=AL,CU,RB&days=30",
+        "industryData": "/api/industry-data?stock=600519&industries=auto&years=8",
         "aiAnalysis": "POST /api/ai-analysis",
         "businessTypeAnalysis": "POST /api/business-type-analysis",
     }
@@ -4110,9 +4973,9 @@ def api_profit_driver_model(stock: str = "600519", refresh: str = ""):
 
 
 @app.get("/api/market-index-valuation")
-def api_market_index_valuation(index: str = "sp500", years: str = "20", refresh: str = ""):
+def api_market_index_valuation(index: str = "sp500", years: str = "5", refresh: str = ""):
     try:
-        normalized_years = normalize_years(years, default=20)
+        normalized_years = normalize_years(years, default=5)
         return get_market_index_valuation_payload_with_cache(
             index_code=index,
             years=normalized_years,
@@ -4122,6 +4985,53 @@ def api_market_index_valuation(index: str = "sp500", years: str = "20", refresh:
         print(f"[ERROR] {exc}")
         return JSONResponse(
             {"error": str(exc), "index": index, "years": years},
+            status_code=400,
+        )
+
+
+@app.get("/api/commodity-prices")
+def api_commodity_prices(symbols: str = "all", days: str = "30"):
+    try:
+        return get_cached_payload_or_build(
+            "commodity_prices_v1",
+            symbols or "all",
+            normalize_commodity_days(days),
+            builder=lambda: build_commodity_prices_payload(symbols=symbols, days=days),
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "symbols": symbols,
+                "days": days,
+            },
+            status_code=400,
+        )
+
+
+@app.get("/api/industry-data")
+def api_industry_data(stock: str = "600519", industries: str = "auto", years: str = "8", refresh: str = ""):
+    try:
+        normalized_stock = normalize_stock_code(stock.strip() or "600519")
+        normalized_years = normalize_years(years, default=8)
+        return get_cached_payload_or_build(
+            "industry_data_v1",
+            normalized_stock,
+            industries or "all",
+            normalized_years,
+            builder=lambda: build_industry_data_payload(stock=normalized_stock, industries=industries, years=str(normalized_years)),
+            refresh=refresh == "1",
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "stock": stock,
+                "industries": industries,
+                "years": years,
+            },
             status_code=400,
         )
 

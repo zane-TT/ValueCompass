@@ -74,7 +74,7 @@ function getDataQualityLabel(value?: string) {
 
 export default function MarketValuationClient() {
   const [marketIndexCode, setMarketIndexCode] = useState("sp500");
-  const [marketIndexYears, setMarketIndexYears] = useState("20");
+  const [marketIndexYears, setMarketIndexYears] = useState("5");
   const [marketIndexData, setMarketIndexData] = useState<MarketIndexValuationResponse | null>(null);
   const [marketIndexStatus, setMarketIndexStatus] = useState("等待加载大盘估值数据");
   const [marketIndexError, setMarketIndexError] = useState<string | null>(null);
@@ -110,7 +110,7 @@ export default function MarketValuationClient() {
   }
 
   useEffect(() => {
-    void loadMarketIndexData("sp500", "20");
+    void loadMarketIndexData("sp500", "5");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
