@@ -410,22 +410,26 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
     "csi300": {
         "name": "CSI 300",
         "displayName": "沪深300",
-        "peSource": "legulegu_csindex",
-        "peUrl": "https://legulegu.com/stockdata/hs300-ttm-lyr",
+        "peSource": "etfrun_legulegu_csindex",
+        "peUrl": "https://www.etf.run/index/SSE/000300",
         "csindexSymbol": "000300",
+        "etfRunMarket": "SSE",
+        "etfRunSymbol": "000300",
         "leguleguSymbol": "沪深300",
-        "sourceLabel": "乐咕乐股指数市盈率 / 中证指数估值备用",
-        "sourceQuality": "沪深300 PE 优先使用乐咕乐股历史滚动市盈率；如外部源不可用，回退到中证指数官网最近估值数据。",
+        "sourceLabel": "ETF.run 指数等权 PE TTM / 乐咕乐股与中证指数官网备用",
+        "sourceQuality": "沪深300 PE 优先使用 ETF.run 历史等权 PE TTM 序列，速度较快但与指数整体滚动市盈率口径不同；如外部源不可用，回退到乐咕乐股或中证指数官网最近估值数据。",
     },
     "csi500": {
         "name": "CSI 500",
         "displayName": "中证500",
-        "peSource": "legulegu_csindex",
-        "peUrl": "https://legulegu.com/stockdata/zz500-ttm-lyr",
+        "peSource": "etfrun_legulegu_csindex",
+        "peUrl": "https://www.etf.run/index/SSE/000905",
         "csindexSymbol": "000905",
+        "etfRunMarket": "SSE",
+        "etfRunSymbol": "000905",
         "leguleguSymbol": "中证500",
-        "sourceLabel": "乐咕乐股指数市盈率 / 中证指数估值备用",
-        "sourceQuality": "中证500 PE 优先使用乐咕乐股历史滚动市盈率；如外部源不可用，回退到中证指数官网最近估值数据。",
+        "sourceLabel": "ETF.run 指数等权 PE TTM / 乐咕乐股与中证指数官网备用",
+        "sourceQuality": "中证500 PE 优先使用 ETF.run 历史等权 PE TTM 序列，速度较快但与指数整体滚动市盈率口径不同；如外部源不可用，回退到乐咕乐股或中证指数官网最近估值数据。",
     },
     "dividend_low_vol_100": {
         "name": "CSI Dividend Low Volatility 100",
@@ -433,6 +437,8 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
         "peSource": "etfrun_csindex",
         "peUrl": "https://www.etf.run/index/CSI/930955",
         "csindexSymbol": "930955",
+        "etfRunMarket": "CSI",
+        "etfRunSymbol": "930955",
         "etfRunUrl": "https://www.etf.run/index/CSI/930955",
         "sourceLabel": "ETF.run 指数估值 / 中证指数官网备用",
         "sourceQuality": "红利低波100 优先使用 ETF.run 页面内嵌的等权 PE_TTM 历史序列；若失败，再回退中证指数官网近期估值，且不会用短序列计算长期分位。",
@@ -3333,10 +3339,14 @@ def load_etfrun_index_pe_points(market: str, symbol: str) -> list[dict]:
 
 def load_china_index_pe_points(index_code: str) -> list[dict]:
     config = MARKET_INDEX_CONFIG[index_code]
-    if index_code == "dividend_low_vol_100":
-        points = load_etfrun_index_pe_points("CSI", config["csindexSymbol"])
+    etfrun_market = config.get("etfRunMarket")
+    etfrun_symbol = config.get("etfRunSymbol")
+    if etfrun_market and etfrun_symbol:
+        points = load_etfrun_index_pe_points(etfrun_market, etfrun_symbol)
         if points:
             return points
+
+    if index_code == "dividend_low_vol_100":
         return load_csindex_recent_pe_points(config["csindexSymbol"])
 
     symbol = config["leguleguSymbol"]
@@ -3469,17 +3479,16 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     code = alias_map.get(code, code)
     config = MARKET_INDEX_CONFIG.get(code, MARKET_INDEX_CONFIG["sp500"])
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        if code in {"csi300", "csi500"}:
-            pe_loader = lambda: load_china_index_pe_points(code)
-        elif code == "dividend_low_vol_100":
-            pe_loader = lambda: load_china_index_pe_points(code)
-        else:
+    if code in {"csi300", "csi500", "dividend_low_vol_100"}:
+        pe_points = load_china_index_pe_points(code)
+        ten_year_yield = None
+    else:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             pe_loader = load_nasdaq100_pe_points if code == "nasdaq100" else load_sp500_pe_points
-        pe_future = executor.submit(pe_loader)
-        ten_year_future = executor.submit(load_ten_year_yield)
-        pe_points = pe_future.result()
-        ten_year_yield = ten_year_future.result()
+            pe_future = executor.submit(pe_loader)
+            ten_year_future = executor.submit(load_ten_year_yield)
+            pe_points = pe_future.result()
+            ten_year_yield = ten_year_future.result()
 
     if not pe_points:
         raise ValueError(f"Unable to fetch PE history for {config['displayName']}.")
