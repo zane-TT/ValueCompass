@@ -3441,6 +3441,7 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     filtered_points = [point for point in pe_points if pd.to_datetime(point["date"]).date() >= cutoff]
     if not filtered_points:
         filtered_points = pe_points
+    ensure_market_index_history_span(code, years, filtered_points)
 
     values = [float(point["pe"]) for point in filtered_points if finite_float(point.get("pe")) > 0]
     current = filtered_points[-1]
@@ -3493,6 +3494,33 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     }
 
 
+def ensure_market_index_history_span(index_code: str, years: int, pe_points: list[dict]) -> None:
+    if index_code not in {"csi300", "csi500"} or years < 5 or not pe_points:
+        return
+
+    dates = [pd.to_datetime(point.get("date"), errors="coerce").date() for point in pe_points]
+    dates = [date for date in dates if pd.notna(date)]
+    if len(dates) < 120:
+        raise ValueError(f"{index_code} PE 历史样本过短，不能用于 {years} 年历史分位。")
+    span_days = (max(dates) - min(dates)).days
+    required_days = years * 365 * 0.7
+    if span_days < required_days:
+        raise ValueError(
+            f"{index_code} PE 历史跨度仅 {span_days} 天，不能当作 {years} 年历史分位；请刷新乐咕乐股历史源。"
+        )
+
+
+def is_market_index_cache_usable(payload: dict | None, index_code: str, years: int) -> bool:
+    if payload is None:
+        return False
+    try:
+        ensure_market_index_history_span(index_code, years, payload.get("peLine") if isinstance(payload.get("peLine"), list) else [])
+    except Exception as exc:
+        print(f"[WARN] Market index cache ignored, index={index_code}, years={years}: {exc}")
+        return False
+    return True
+
+
 def get_market_index_valuation_payload_with_cache(index_code: str, years: int, refresh: bool = False) -> dict:
     code = str(index_code or "sp500").lower()
     alias_map = {
@@ -3512,11 +3540,14 @@ def get_market_index_valuation_payload_with_cache(index_code: str, years: int, r
         "dividend_low_vol": "dividend_low_vol_100",
     }
     code = alias_map.get(code, code)
-    current_cache = load_cached_payload("market_index_valuation_v3", code, years)
-    if current_cache is not None and not refresh:
+    current_cache = load_cached_payload("market_index_valuation_v4", code, years)
+    if is_market_index_cache_usable(current_cache, code, years) and not refresh:
         return current_cache
 
     stale_cache = load_latest_cached_payload(f"market_index_valuation_v*__{sanitize_cache_part(code)}__{sanitize_cache_part(years)}.json")
+    if not is_market_index_cache_usable(stale_cache, code, years):
+        stale_cache = None
+
     if stale_cache is not None and not refresh:
         stale_cache = dict(stale_cache)
         stale_cache["status"] = "stale_cache"
@@ -3525,7 +3556,7 @@ def get_market_index_valuation_payload_with_cache(index_code: str, years: int, r
 
     try:
         payload = build_market_index_valuation_payload(index_code=code, years=years)
-        save_cached_payload(payload, "market_index_valuation_v3", code, years)
+        save_cached_payload(payload, "market_index_valuation_v4", code, years)
         return payload
     except Exception as exc:
         if stale_cache is not None:
