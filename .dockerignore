@@ -14,6 +14,7 @@ frontend/.next
 frontend/out
 frontend/tsconfig.tsbuildinfo
 
-backend/cache
+backend/cache/*
+!backend/cache/market_index_valuation_v4__*.json
 backend/.env
 *.log

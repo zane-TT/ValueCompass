@@ -101,7 +101,16 @@ export default function MarketValuationClient() {
       const response = await fetch(`${API_BASE}/api/market-index-valuation?${params.toString()}`, {
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorData = (await response.json()) as { error?: string };
+          if (errorData.error) errorMessage = errorData.error;
+        } catch {
+          // Keep the HTTP status when the backend returns a non-JSON error body.
+        }
+        throw new Error(errorMessage);
+      }
       const data = (await response.json()) as MarketIndexValuationResponse;
       if (marketIndexRequestIdRef.current !== requestId) return;
       setMarketIndexData(data);

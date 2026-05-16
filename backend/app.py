@@ -3337,27 +3337,57 @@ def load_etfrun_index_pe_points(market: str, symbol: str) -> list[dict]:
     return sorted(points, key=lambda item: item["date"])
 
 
-def load_china_index_pe_points(index_code: str) -> list[dict]:
+def is_market_index_history_sufficient(index_code: str, years: int, pe_points: list[dict]) -> tuple[bool, str]:
+    try:
+        ensure_market_index_history_span(index_code, years, pe_points)
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def load_china_index_pe_points(index_code: str, years: int = 5) -> list[dict]:
     config = MARKET_INDEX_CONFIG[index_code]
+    source_errors: list[str] = []
     etfrun_market = config.get("etfRunMarket")
     etfrun_symbol = config.get("etfRunSymbol")
     if etfrun_market and etfrun_symbol:
         points = load_etfrun_index_pe_points(etfrun_market, etfrun_symbol)
         if points:
-            return points
+            is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
+            if is_sufficient:
+                return points
+            source_errors.append(f"ETF.run: {reason}")
+        else:
+            source_errors.append("ETF.run: 未返回可用 PE 历史")
 
     if index_code == "dividend_low_vol_100":
-        return load_csindex_recent_pe_points(config["csindexSymbol"])
+        points = load_csindex_recent_pe_points(config["csindexSymbol"])
+        is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
+        if is_sufficient:
+            return points
+        detail = "; ".join([*source_errors, f"中证指数官网: {reason or '未返回可用 PE 历史'}"])
+        raise ValueError(f"{config['displayName']} 暂未抓到足够 {years} 年估值历史：{detail}")
 
     symbol = config["leguleguSymbol"]
     try:
         print(f"[INFO] Fetching China index PE history from Legulegu, symbol={symbol}")
         points = load_legulegu_index_pe_points(symbol)
         if points:
-            return points
+            is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
+            if is_sufficient:
+                return points
+            source_errors.append(f"乐咕乐股: {reason}")
+        else:
+            source_errors.append("乐咕乐股: 未返回可用 PE 历史")
     except Exception as exc:
         print(f"[WARN] Legulegu index PE unavailable: {symbol}: {exc}")
-    return load_csindex_recent_pe_points(config["csindexSymbol"])
+        source_errors.append(f"乐咕乐股: {exc}")
+    points = load_csindex_recent_pe_points(config["csindexSymbol"])
+    is_sufficient, reason = is_market_index_history_sufficient(index_code, years, points)
+    if is_sufficient:
+        return points
+    detail = "; ".join([*source_errors, f"中证指数官网: {reason or '未返回可用 PE 历史'}"])
+    raise ValueError(f"{config['displayName']} 暂未抓到足够 {years} 年估值历史：{detail}")
 
 
 def load_cached_market_ten_year_yield() -> dict | None:
@@ -3480,7 +3510,7 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     config = MARKET_INDEX_CONFIG.get(code, MARKET_INDEX_CONFIG["sp500"])
 
     if code in {"csi300", "csi500", "dividend_low_vol_100"}:
-        pe_points = load_china_index_pe_points(code)
+        pe_points = load_china_index_pe_points(code, years=years)
         ten_year_yield = None
     else:
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -3550,6 +3580,64 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
     }
 
 
+def build_limited_market_index_valuation_payload(index_code: str, years: int, reason: object) -> dict:
+    code = str(index_code or "sp500").lower()
+    config = MARKET_INDEX_CONFIG.get(code, MARKET_INDEX_CONFIG["sp500"])
+    csindex_symbol = config.get("csindexSymbol")
+    if not csindex_symbol:
+        raise ValueError(str(reason))
+
+    pe_points = load_csindex_recent_pe_points(csindex_symbol)
+    if not pe_points:
+        raise ValueError(str(reason))
+
+    values = [float(point["pe"]) for point in pe_points if finite_float(point.get("pe")) > 0]
+    if not values:
+        raise ValueError(str(reason))
+
+    current = pe_points[-1]
+    current_pe = float(current["pe"])
+    mean_pe = round(sum(values) / len(values), 2)
+    median_pe = round(float(pd.Series(values).median()), 2)
+    low_line = round(float(pd.Series(values).quantile(0.2)), 2)
+    high_line = round(float(pd.Series(values).quantile(0.8)), 2)
+    percentile = percentile_rank(values, current_pe)
+    return {
+        "indexCode": code,
+        "indexName": config["name"],
+        "displayName": config["displayName"],
+        "status": "limited_history",
+        "sourceLabel": f"{config['sourceLabel']} / CSIndex recent fallback",
+        "dataQuality": {
+            "peHistory": "limited",
+            "eps": "not_used",
+            "interestRate": "not_connected",
+            "notes": [
+                f"Long-history PE sources are unavailable, so this response uses recent CSIndex valuation data instead: {reason}",
+                f"Only {len(pe_points)} recent PE samples are available; this is not a valid {years}-year historical percentile.",
+            ],
+        },
+        "summary": {
+            "currentDate": current["date"],
+            "currentPe": round(current_pe, 2),
+            "meanPe": mean_pe,
+            "medianPe": median_pe,
+            "lowLine": low_line,
+            "highLine": high_line,
+            "percentile": percentile,
+            "valuationZone": classify_valuation_zone(percentile),
+            "earningsYield": round(100 / current_pe, 2) if current_pe > 0 else 0,
+            "tenYearYield": None,
+            "equityRiskPremium": None,
+            "years": years,
+        },
+        "peLine": pe_points,
+        "priceLine": [],
+        "conclusion": f"{config['displayName']} current PE is {current_pe:.2f}x. Long-history sources are unavailable, so recent valuation data is shown as a fallback.",
+        "sourceUrls": [config["peUrl"]],
+    }
+
+
 def ensure_market_index_history_span(index_code: str, years: int, pe_points: list[dict]) -> None:
     if years < 5 or not pe_points:
         return
@@ -3569,12 +3657,22 @@ def ensure_market_index_history_span(index_code: str, years: int, pe_points: lis
 def is_market_index_cache_usable(payload: dict | None, index_code: str, years: int) -> bool:
     if payload is None:
         return False
+    if payload.get("status") == "limited_history":
+        print(f"[WARN] Limited market index payload ignored, index={index_code}, years={years}")
+        return False
     try:
         ensure_market_index_history_span(index_code, years, payload.get("peLine") if isinstance(payload.get("peLine"), list) else [])
     except Exception as exc:
         print(f"[WARN] Market index cache ignored, index={index_code}, years={years}: {exc}")
         return False
     return True
+
+
+def save_market_index_valuation_payload(payload: dict, index_code: str, years: int) -> dict:
+    if payload.get("status") != "ok":
+        raise ValueError(f"Refusing to cache non-ok market index payload: status={payload.get('status')}")
+    ensure_market_index_history_span(index_code, years, payload.get("peLine") if isinstance(payload.get("peLine"), list) else [])
+    return save_cached_payload(payload, "market_index_valuation_v4", index_code, years)
 
 
 def get_market_index_valuation_payload_with_cache(index_code: str, years: int, refresh: bool = False) -> dict:
@@ -3612,7 +3710,7 @@ def get_market_index_valuation_payload_with_cache(index_code: str, years: int, r
 
     try:
         payload = build_market_index_valuation_payload(index_code=code, years=years)
-        save_cached_payload(payload, "market_index_valuation_v4", code, years)
+        save_market_index_valuation_payload(payload, code, years)
         return payload
     except Exception as exc:
         if stale_cache is not None:
@@ -3620,7 +3718,7 @@ def get_market_index_valuation_payload_with_cache(index_code: str, years: int, r
             stale_cache["status"] = "stale_cache"
             stale_cache.setdefault("dataQuality", {}).setdefault("notes", []).append(f"外部估值源暂不可用，使用最近缓存：{exc}")
             return stale_cache
-        raise
+        return build_limited_market_index_valuation_payload(code, years, exc)
 
 
 def build_health_payload() -> dict:
