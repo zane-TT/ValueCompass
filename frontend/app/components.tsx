@@ -54,6 +54,92 @@ type SystemStatusProps = {
   children: ReactNode;
 };
 
+type AppShellProps = {
+  active: "stocks" | "markets";
+  children: ReactNode;
+};
+
+const NAV_ITEMS = [
+  {
+    id: "stocks",
+    href: "/",
+    label: "个股分析",
+    eyebrow: "A 股公司",
+    initials: "ST",
+    enabled: true,
+  },
+  {
+    id: "markets",
+    href: "/market-valuation",
+    label: "大盘估值",
+    eyebrow: "美股指数",
+    initials: "PE",
+    enabled: true,
+  },
+  {
+    id: "industry",
+    href: "#",
+    label: "行业监控",
+    eyebrow: "利润驱动",
+    initials: "ID",
+    enabled: false,
+  },
+  {
+    id: "macro",
+    href: "#",
+    label: "宏观变量",
+    eyebrow: "利率 汇率 商品",
+    initials: "MA",
+    enabled: false,
+  },
+];
+
+export function AppShell({ active, children }: AppShellProps) {
+  return (
+    <main className="app-shell">
+      <aside className="app-sidebar" aria-label="主导航">
+        <a className="sidebar-brand" href="/">
+          <span>VC</span>
+          <strong>ValueCompass</strong>
+        </a>
+
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map((item) => {
+            const isActive = item.id === active;
+            const className = `sidebar-nav-item ${isActive ? "active" : ""} ${item.enabled ? "" : "disabled"}`;
+            const content = (
+              <>
+                <span className="sidebar-nav-code">{item.initials}</span>
+                <span>
+                  <strong>{item.label}</strong>
+                  <em>{item.eyebrow}</em>
+                </span>
+              </>
+            );
+
+            return item.enabled ? (
+              <a key={item.id} className={className} href={item.href} aria-current={isActive ? "page" : undefined}>
+                {content}
+              </a>
+            ) : (
+              <span key={item.id} className={className} aria-disabled="true">
+                {content}
+              </span>
+            );
+          })}
+        </nav>
+
+        <div className="sidebar-footnote">
+          <span>Data terminal</span>
+          <strong>估值、利润驱动、风险变量分层组织</strong>
+        </div>
+      </aside>
+
+      <section className="app-content">{children}</section>
+    </main>
+  );
+}
+
 export function QueryBar({
   stock,
   period,

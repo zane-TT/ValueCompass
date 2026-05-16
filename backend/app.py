@@ -10,8 +10,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from io import BytesIO
+from datetime import datetime, timedelta, timezone
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Callable
 
@@ -307,6 +307,56 @@ DRIVER_MODEL_REGISTRY: dict[str, dict] = {
 
 KNOWN_DRIVER_MODELS = list(DRIVER_MODEL_REGISTRY.keys())
 
+MARKET_INDEX_CONFIG: dict[str, dict] = {
+    "sp500": {
+        "name": "S&P 500",
+        "displayName": "标普500",
+        "peSource": "multpl",
+        "peUrl": "https://www.multpl.com/s-p-500-pe-ratio/table/by-month",
+        "priceSymbol": "标普500",
+        "sourceLabel": "Multpl S&P 500 PE Ratio (TTM/as-reported) / FRED DGS10",
+        "sourceQuality": "S&P 500 PE 为公开历史序列，非 S&P Dow Jones 官方授权数据；适合估值温度判断，不适合做交易级精确口径。",
+    },
+    "nasdaq100": {
+        "name": "Nasdaq 100",
+        "displayName": "纳斯达克100",
+        "peSource": "worldperatio",
+        "peUrl": "https://worldperatio.com/index/nasdaq-100/",
+        "priceSymbol": "纳斯达克100",
+        "sourceLabel": "World PE Ratio Nasdaq 100 / FRED DGS10",
+        "sourceQuality": "Nasdaq 100 PE 为第三方公开网页口径，非 Nasdaq 官方授权数据；当前只用于参考估值分位。",
+    },
+    "csi300": {
+        "name": "CSI 300",
+        "displayName": "沪深300",
+        "peSource": "legulegu_csindex",
+        "peUrl": "https://legulegu.com/stockdata/hs300-ttm-lyr",
+        "csindexSymbol": "000300",
+        "leguleguSymbol": "沪深300",
+        "sourceLabel": "乐咕乐股指数市盈率 / 中证指数估值备用",
+        "sourceQuality": "沪深300 PE 优先使用乐咕乐股历史滚动市盈率；如外部源不可用，回退到中证指数官网最近估值数据。",
+    },
+    "csi500": {
+        "name": "CSI 500",
+        "displayName": "中证500",
+        "peSource": "legulegu_csindex",
+        "peUrl": "https://legulegu.com/stockdata/zz500-ttm-lyr",
+        "csindexSymbol": "000905",
+        "leguleguSymbol": "中证500",
+        "sourceLabel": "乐咕乐股指数市盈率 / 中证指数估值备用",
+        "sourceQuality": "中证500 PE 优先使用乐咕乐股历史滚动市盈率；如外部源不可用，回退到中证指数官网最近估值数据。",
+    },
+    "dividend_low_vol_100": {
+        "name": "CSI Dividend Low Volatility 100",
+        "displayName": "红利低波100",
+        "peSource": "csindex",
+        "peUrl": "https://www.csindex.com.cn/zh-CN/indices/index-detail/930955",
+        "csindexSymbol": "930955",
+        "sourceLabel": "中证指数官网指数估值",
+        "sourceQuality": "红利低波100 使用中证指数官网最近估值数据；若官网仅提供近期序列，历史分位代表可取数据区间内的位置。",
+    },
+}
+
 ASSET_MAPPING = {
     "现金": [["货币资金"], ["总现金"]],
     "应收款": [
@@ -527,6 +577,21 @@ def load_cached_payload(prefix: str, *parts: object) -> dict | None:
         print(f"[WARN] Cache corrupted, rebuilding: {path.name}")
         path.unlink(missing_ok=True)
         return None
+
+
+def load_latest_cached_payload(pattern: str) -> dict | None:
+    try:
+        for path in sorted(CACHE_DIR.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True):
+            try:
+                with path.open("r", encoding="utf-8") as cache_file:
+                    print(f"[INFO] Stale cache hit: {path.name}")
+                    return json.load(cache_file)
+            except json.JSONDecodeError:
+                print(f"[WARN] Cache corrupted, ignoring: {path.name}")
+                path.unlink(missing_ok=True)
+    except Exception as exc:
+        print(f"[WARN] Latest cache lookup failed: {pattern}: {exc}")
+    return None
 
 
 def save_cached_payload(payload: dict, prefix: str, *parts: object) -> dict:
@@ -1573,6 +1638,431 @@ def build_driver_model_segment(
     }
 
 
+def finite_float(value: object, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def parse_report_number_to_float(text: str) -> float | None:
+    cleaned = str(text or "").replace(",", "").strip()
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def extract_annual_report_year(report_payload: dict) -> int | None:
+    for value in [report_payload.get("date"), report_payload.get("title"), report_payload.get("textExcerpt")]:
+        match = re.search(r"(20\d{2})", str(value or ""))
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def extract_aluminum_capacity_from_report(report_payload: dict, product_kind: str = "primary_aluminum") -> dict | None:
+    text = str(report_payload.get("textExcerpt") or "")
+    if not text:
+        return None
+
+    if product_kind == "aluminum_processing":
+        label = "绿色铝合金年产规模"
+        output_terms = r"(?:铝加工|铝合金|绿色铝合金)"
+        patterns = [
+            ("reported_capacity", r"形成年产[^。\n]{0,140}?绿色铝合\s*金\s*([0-9,.]+)\s*万吨"),
+            ("reported_capacity", r"年产[^。\n]{0,30}?绿色铝合\s*金\s*([0-9,.]+)\s*万吨"),
+            ("reported_output", rf"(?:公司|本公司|报告期内)[^。\n]{{0,60}}?{output_terms}[^。\n]{{0,30}}(?:产量|生产量|销量|销售量)[^0-9]{{0,8}}([0-9,.]+)\s*万吨"),
+        ]
+    else:
+        label = "电解铝年产规模"
+        output_terms = r"(?:铝商品|电解铝|原铝)"
+        patterns = [
+            ("reported_capacity", r"形成年产[^。\n]{0,80}?电解铝\s*([0-9,.]+)\s*万吨"),
+            ("reported_capacity", r"年产[^。\n]{0,20}?电解铝\s*([0-9,.]+)\s*万吨"),
+            ("reported_output", rf"(?:公司|本公司|报告期内)[^。\n]{{0,60}}?{output_terms}[^。\n]{{0,30}}(?:产量|生产量|销量|销售量)[^0-9]{{0,8}}([0-9,.]+)\s*万吨"),
+        ]
+    for basis, pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        wan_ton = parse_report_number_to_float(match.group(1))
+        if not wan_ton:
+            continue
+        start, end = match.span()
+        return {
+            "basis": basis,
+            "label": label.replace("年产规模", "实际产销量") if basis == "reported_output" else label,
+            "volumeWanTon": round(wan_ton, 2),
+            "volumeTon": round(wan_ton * 10000, 0),
+            "sourceText": text[max(0, start - 40) : min(len(text), end + 60)].replace("\n", " ").strip(),
+        }
+    return None
+
+
+def extract_report_net_profit_yi(report_payload: dict) -> float | None:
+    text = str(report_payload.get("textExcerpt") or "")
+    patterns = [
+        r"归属于上市公司股东的净利润（元）\s*([0-9,]+\.\d+)",
+        r"归属于上市公司股东的净利润[^0-9]{0,20}([0-9,]+\.\d+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        value = parse_report_number_to_float(match.group(1))
+        if value:
+            return round(value / YI, 2)
+    return None
+
+
+def find_main_business_item(main_business_payload: dict, keywords: list[str]) -> dict | None:
+    items = main_business_payload.get("items") if isinstance(main_business_payload, dict) else []
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("itemName") or "")
+        category = str(item.get("categoryType") or "")
+        if "产品" not in category:
+            continue
+        if any(keyword in name for keyword in keywords):
+            return item
+    for item in items:
+        if isinstance(item, dict) and any(keyword in str(item.get("itemName") or "") for keyword in keywords):
+            return item
+    return None
+
+
+def load_aluminum_latest_price() -> dict | None:
+    def fetch() -> pd.DataFrame:
+        print("[INFO] Fetching aluminum futures spot, symbol=AL0")
+        with temporary_disable_proxy_env():
+            return ak.futures_zh_spot(symbol="AL0", market="CF", adjust="0")
+
+    try:
+        df = get_ak_dataframe_cached(("futures_zh_spot", "AL0"), fetch)
+        if df is None or df.empty:
+            return None
+        row = df.iloc[0]
+        current_price = finite_float(row.get("current_price"))
+        if current_price <= 0:
+            current_price = finite_float(row.get("last_settle_price"))
+        if current_price <= 0:
+            return None
+        return {
+            "symbol": "AL0",
+            "name": str(row.get("symbol") or "铝连续"),
+            "price": round(current_price, 2),
+            "lastSettlePrice": round(finite_float(row.get("last_settle_price")), 2),
+            "unit": "元/吨",
+            "time": str(row.get("time") or ""),
+            "source": "akshare.futures_zh_spot(Sina)",
+            "fetchedAt": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        print(f"[WARN] Aluminum latest price unavailable: {exc}")
+        return None
+
+
+def load_aluminum_annual_average_price(year: int | None) -> dict | None:
+    if not year:
+        return None
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching aluminum futures history, symbol=AL0, year={year}")
+        with temporary_disable_proxy_env():
+            return ak.futures_main_sina(symbol="AL0", start_date=f"{year}0101", end_date=f"{year}1231")
+
+    try:
+        df = get_ak_dataframe_cached(("futures_main_sina", "AL0", year), fetch)
+        if df is None or df.empty or "收盘价" not in df.columns:
+            return None
+        close = pd.to_numeric(df["收盘价"], errors="coerce").dropna()
+        close = close[close > 0]
+        if close.empty:
+            return None
+        return {
+            "year": year,
+            "averageClosePrice": round(float(close.mean()), 2),
+            "lastClosePrice": round(float(close.iloc[-1]), 2),
+            "tradeDays": int(close.shape[0]),
+            "unit": "元/吨",
+            "source": "akshare.futures_main_sina(Sina)",
+        }
+    except Exception as exc:
+        print(f"[WARN] Aluminum annual average price unavailable: {exc}")
+        return None
+
+
+def load_aluminum_price_window(start_date: datetime, end_date: datetime, label: str) -> dict | None:
+    start = start_date.strftime("%Y%m%d")
+    end = end_date.strftime("%Y%m%d")
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching aluminum futures history, symbol=AL0, window={label}")
+        with temporary_disable_proxy_env():
+            return ak.futures_main_sina(symbol="AL0", start_date=start, end_date=end)
+
+    try:
+        df = get_ak_dataframe_cached(("futures_main_sina", "AL0", label, start, end), fetch)
+        if df is None or df.empty or "收盘价" not in df.columns:
+            return None
+        close = pd.to_numeric(df["收盘价"], errors="coerce").dropna()
+        close = close[close > 0]
+        if close.empty:
+            return None
+        return {
+            "label": label,
+            "startDate": start_date.date().isoformat(),
+            "endDate": end_date.date().isoformat(),
+            "averageClosePrice": round(float(close.mean()), 2),
+            "lastClosePrice": round(float(close.iloc[-1]), 2),
+            "tradeDays": int(close.shape[0]),
+            "unit": "元/吨",
+            "source": "akshare.futures_main_sina(Sina)",
+        }
+    except Exception as exc:
+        print(f"[WARN] Aluminum price window unavailable, label={label}: {exc}")
+        return None
+
+
+def build_profit_forecast_scenario(
+    name: str,
+    price: float,
+    volume_ton: float,
+    cost_per_ton: float,
+    baseline_gross_profit_yi: float,
+    net_bridge_ratio: float | None,
+    reason: str,
+) -> dict:
+    gross_profit_yi = volume_ton * (price - cost_per_ton) / YI
+    net_profit_yi = gross_profit_yi * net_bridge_ratio if net_bridge_ratio is not None else None
+    return {
+        "name": name,
+        "forecastHorizon": "未来12个月",
+        "pricePerTon": round(price, 2),
+        "volumeWanTon": round(volume_ton / 10000, 2),
+        "costPerTon": round(cost_per_ton, 2),
+        "grossProfitYi": round(gross_profit_yi, 2),
+        "grossProfitDeltaYi": round(gross_profit_yi - baseline_gross_profit_yi, 2),
+        "netProfitYi": round(net_profit_yi, 2) if net_profit_yi is not None else None,
+        "reason": reason,
+    }
+
+
+def build_aluminum_profit_calculation(
+    stock: str,
+    main_business_payload: dict,
+    annual_report_payload: dict,
+    segment_name: str = "",
+) -> dict | None:
+    is_primary_aluminum = any(keyword in segment_name for keyword in ["电解铝", "冶炼", "原铝"])
+    is_processing = not is_primary_aluminum and any(keyword in segment_name for keyword in ["铝加工", "铝材", "铝合金"])
+    product_kind = "aluminum_processing" if is_processing else "primary_aluminum"
+    business_item = find_main_business_item(
+        main_business_payload,
+        ["铝加工产品", "铝材加工", "绿色铝合金", "铝合金"] if is_processing else ["电解铝", "原铝", "铝产品"],
+    )
+    if not business_item:
+        return None
+
+    revenue_yi = finite_float(business_item.get("revenue"))
+    cost_yi = finite_float(business_item.get("cost"))
+    profit_yi = finite_float(business_item.get("profit"))
+    if revenue_yi <= 0 or cost_yi <= 0:
+        return None
+
+    report_year_match = re.search(r"(20\d{2})", str(business_item.get("reportDate") or ""))
+    report_year = int(report_year_match.group(1)) if report_year_match else extract_annual_report_year(annual_report_payload)
+    latest_price = load_aluminum_latest_price()
+    annual_price = load_aluminum_annual_average_price(report_year)
+    baseline_price = finite_float((annual_price or {}).get("averageClosePrice")) or finite_float((latest_price or {}).get("price"))
+    latest_price_value = finite_float((latest_price or {}).get("price"))
+    if baseline_price <= 0 or latest_price_value <= 0:
+        return None
+    today = datetime.now()
+    ytd_price = load_aluminum_price_window(datetime(today.year, 1, 1), today, "ytd")
+    recent90_price = load_aluminum_price_window(today - timedelta(days=90), today, "recent_90d")
+
+    capacity = extract_aluminum_capacity_from_report(annual_report_payload, product_kind=product_kind)
+    reported_volume_ton = finite_float((capacity or {}).get("volumeTon"))
+    revenue_implied_volume_ton = revenue_yi * YI / baseline_price
+    conservative_volume_ton = revenue_implied_volume_ton
+    volume_basis = "revenue_implied_sales_volume"
+    if reported_volume_ton > 0:
+        conservative_volume_ton = min(reported_volume_ton, revenue_implied_volume_ton)
+        volume_basis = "min_reported_capacity_and_revenue_implied_sales"
+    if conservative_volume_ton <= 0:
+        return None
+
+    implied_selling_price = revenue_yi * YI / conservative_volume_ton
+    implied_cost_per_ton = cost_yi * YI / conservative_volume_ton
+    implied_gross_profit_per_ton = profit_yi * YI / conservative_volume_ton if profit_yi > 0 else implied_selling_price - implied_cost_per_ton
+    estimated_gross_profit_yi = latest_price_value * conservative_volume_ton / YI - cost_yi
+    estimated_gross_profit_delta_yi = estimated_gross_profit_yi - profit_yi
+    product_profit_items = [
+        finite_float(item.get("profit"))
+        for item in main_business_payload.get("items", [])
+        if isinstance(item, dict) and "产品" in str(item.get("categoryType") or "") and finite_float(item.get("profit")) > 0
+    ]
+    gross_profit_total_yi = sum(product_profit_items)
+    net_profit_yi = extract_report_net_profit_yi(annual_report_payload)
+    net_bridge_ratio = None
+    estimated_net_profit_yi = None
+    if net_profit_yi and gross_profit_total_yi > 0:
+        net_bridge_ratio = max(0.0, min(net_profit_yi / gross_profit_total_yi, 1.0))
+        estimated_net_profit_yi = estimated_gross_profit_yi * net_bridge_ratio
+
+    ytd_price_value = finite_float((ytd_price or {}).get("averageClosePrice"))
+    recent90_price_value = finite_float((recent90_price or {}).get("averageClosePrice"))
+    price_candidates = [value for value in [latest_price_value, ytd_price_value, recent90_price_value] if value > 0]
+    conservative_price = min(price_candidates) if price_candidates else latest_price_value
+    neutral_price = recent90_price_value or ytd_price_value or latest_price_value
+    optimistic_price = max(price_candidates) if price_candidates else latest_price_value
+    capacity_limited_volume = reported_volume_ton if reported_volume_ton > 0 else conservative_volume_ton * 1.03
+    forecast_scenarios = [
+        build_profit_forecast_scenario(
+            "保守",
+            conservative_price,
+            min(capacity_limited_volume, conservative_volume_ton * 0.98),
+            implied_cost_per_ton * 1.03,
+            profit_yi,
+            net_bridge_ratio,
+            "价格取年初以来、近90日和最新价中的低值；销量按保守销量下调2%；单吨成本上调3%。",
+        ),
+        build_profit_forecast_scenario(
+            "中性",
+            neutral_price,
+            min(capacity_limited_volume, conservative_volume_ton),
+            implied_cost_per_ton * 1.01,
+            profit_yi,
+            net_bridge_ratio,
+            "价格取近90日均价；销量沿用保守销量；单吨成本上调1%。",
+        ),
+        build_profit_forecast_scenario(
+            "乐观",
+            optimistic_price,
+            min(capacity_limited_volume, conservative_volume_ton * 1.03),
+            implied_cost_per_ton,
+            profit_yi,
+            net_bridge_ratio,
+            "价格取年初以来、近90日和最新价中的高值；销量在产能约束内提升3%；单吨成本维持年报水平。",
+        ),
+    ]
+    neutral_forecast = next(item for item in forecast_scenarios if item["name"] == "中性")
+
+    assumptions = [
+        "销量采用保守口径：按披露产能与收入/报告期铝均价反推销量取较低值。",
+        "单吨成本沿用最新年报分部成本，不主动假设氧化铝、电力、阳极等成本下降。",
+        "最新铝价使用 AL0 铝连续行情，报告期基准价使用 AL0 年度收盘均价。",
+        "未来12个月预测采用三情景，不把单一最新价当作全年均价。",
+    ]
+    if capacity and capacity.get("basis") == "reported_capacity":
+        assumptions.append(f"年报披露的是{capacity.get('label')}而非明确销量，因此不会直接把产能全量当成销量。")
+
+    prediction_plan = {
+        "headline": "未来12个月铝价驱动利润预测",
+        "logic": [
+            f"先锁定最新年报中“{business_item.get('itemName')}”分部的收入、成本和毛利，避免用公司总收入混算。",
+            "再用报告期 AL0 年度均价反推该分部可解释销量，并与年报披露产能取较低值，避免把产能当满产销量。",
+            "最后用年初以来均价、近90日均价和最新价组合成保守/中性/乐观三档，预测未来12个月毛利区间。",
+        ],
+        "evidence": [
+            f"{business_item.get('reportDate')} {business_item.get('itemName')}收入 {round(revenue_yi, 2)} 亿元、成本 {round(cost_yi, 2)} 亿元、毛利 {round(profit_yi, 2)} 亿元。",
+            f"{report_year} 年 AL0 收盘均价 {round(baseline_price, 2)} 元/吨，最新 AL0 {round(latest_price_value, 2)} 元/吨。",
+            f"年初以来 AL0 均价 {round(ytd_price_value, 2) if ytd_price_value else '-'} 元/吨，近90日均价 {round(recent90_price_value, 2) if recent90_price_value else '-'} 元/吨。",
+            f"保守销量 {round(conservative_volume_ton / 10000, 2)} 万吨，反推单吨成本 {round(implied_cost_per_ton, 2)} 元/吨。",
+        ],
+        "confidence": "medium",
+        "watchItems": ["AL0/沪铝价格", "氧化铝价格", "云南电力成本", "阳极炭素价格", "公司实际产销量披露"],
+        "risks": [
+            "铝加工产品售价不完全等同原铝价格，深加工费和产品结构会影响弹性。",
+            "如果氧化铝、电力、阳极等成本同步上涨，毛利改善会低于只替换铝价的结果。",
+            "年报披露产能不是实际销量，当前用收入反推销量作为保守替代。",
+        ],
+    }
+
+    return {
+        "status": "calculated",
+        "model": "aluminum_commodity",
+        "segmentName": str(business_item.get("itemName") or "电解铝"),
+        "reportYear": report_year,
+        "sourceData": {
+            "businessItem": {
+                "itemName": business_item.get("itemName"),
+                "reportDate": business_item.get("reportDate"),
+                "revenueYi": round(revenue_yi, 2),
+                "costYi": round(cost_yi, 2),
+                "grossProfitYi": round(profit_yi, 2),
+                "grossMargin": business_item.get("grossMargin"),
+            },
+            "reportedVolumeOrCapacity": capacity,
+            "baselineMarketPrice": annual_price,
+            "latestMarketPrice": latest_price,
+            "ytdMarketPrice": ytd_price,
+            "recent90dMarketPrice": recent90_price,
+            "netProfitYi": net_profit_yi,
+        },
+        "derivedInputs": {
+            "revenueImpliedSalesVolumeWanTon": round(revenue_implied_volume_ton / 10000, 2),
+            "conservativeVolumeWanTon": round(conservative_volume_ton / 10000, 2),
+            "volumeBasis": volume_basis,
+            "impliedSellingPricePerTon": round(implied_selling_price, 2),
+            "impliedCostPerTon": round(implied_cost_per_ton, 2),
+            "impliedGrossProfitPerTon": round(implied_gross_profit_per_ton, 2),
+            "netProfitToGrossProfitRatio": round(net_bridge_ratio, 4) if net_bridge_ratio is not None else None,
+        },
+        "result": {
+            "baselineGrossProfitYi": round(profit_yi, 2),
+            "estimatedGrossProfitYi": neutral_forecast["grossProfitYi"],
+            "estimatedGrossProfitDeltaYi": neutral_forecast["grossProfitDeltaYi"],
+            "estimatedNetProfitYi": neutral_forecast["netProfitYi"],
+            "currentPriceResetGrossProfitYi": round(estimated_gross_profit_yi, 2),
+            "currentPriceResetGrossProfitDeltaYi": round(estimated_gross_profit_delta_yi, 2),
+            "currentPriceResetNetProfitYi": round(estimated_net_profit_yi, 2) if estimated_net_profit_yi is not None else None,
+            "forecastHorizon": "未来12个月",
+            "formula": "未来12个月毛利 = 情景销量 × (情景铝价 - 情景单吨成本)",
+        },
+        "forecast12m": forecast_scenarios,
+        "assumptions": assumptions,
+        "predictionPlan": prediction_plan,
+    }
+
+
+def attach_profit_driver_calculations(
+    payload: dict,
+    stock: str,
+    main_business_payload: dict,
+    annual_report_payload: dict,
+) -> dict:
+    segments = payload.get("segments") if isinstance(payload.get("segments"), list) else []
+    calculations: list[dict] = []
+    for segment in segments:
+        if not isinstance(segment, dict) or segment.get("driverModel") != "aluminum_commodity":
+            continue
+        segment_name = str(segment.get("segmentName") or "")
+        segment_calculation = build_aluminum_profit_calculation(
+            stock,
+            main_business_payload,
+            annual_report_payload,
+            segment_name=segment_name,
+        )
+        if segment_calculation:
+            segment["calculation"] = segment_calculation
+            segment["dataStatus"] = "calculated"
+            calculations.append(segment_calculation)
+
+    if calculations:
+        payload["calculations"] = calculations
+        payload["dataGaps"] = []
+    return payload
+
+
 def normalize_driver_model(model: object) -> str:
     text = str(model or "").strip()
     return text if text in DRIVER_MODEL_REGISTRY else "generic_volume_price"
@@ -1732,24 +2222,457 @@ def ai_classify_profit_driver_model(profile_payload: dict, main_business_payload
 def build_profit_driver_model_payload(stock: str) -> dict:
     profile_payload = get_company_profile_payload_with_cache(stock=stock)
     main_business_payload = get_main_business_payload_with_cache(stock=stock)
+    annual_report_payload = get_latest_report_text_payload_v2(stock=stock, category="年报", cache_key="annual_report_v1")
     fallback_payload = rule_classify_profit_driver_model(profile_payload, main_business_payload)
 
     try:
         ai_payload = ai_classify_profit_driver_model(profile_payload, main_business_payload)
-        return ai_payload or fallback_payload
+        payload = ai_payload or fallback_payload
     except Exception as exc:
         print(f"[WARN] AI driver model classification unavailable, fallback to rules: {exc}")
         fallback_payload["aiError"] = str(exc)
-        return fallback_payload
+        payload = fallback_payload
+
+    return attach_profit_driver_calculations(payload, stock, main_business_payload, annual_report_payload)
 
 
 def get_profit_driver_model_payload_with_cache(stock: str, refresh: bool = False) -> dict:
     return get_cached_payload_or_build(
-        "profit_driver_model_v1",
+        "profit_driver_model_v3",
         stock,
         builder=lambda: build_profit_driver_model_payload(stock=stock),
         refresh=refresh,
     )
+
+
+def clean_market_number(value: object) -> float:
+    text = str(value or "").replace(",", "").strip()
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return float(match.group(0)) if match else 0.0
+
+
+def parse_worldperatio_points(html: str) -> list[dict]:
+    match = re.search(r"detailPE_data\s*=\s*\[(.*?)\];", html, flags=re.S)
+    if not match:
+        return []
+    points: list[dict] = []
+    pattern = r"Date\.UTC\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\),\s*(-?\d+(?:\.\d+)?)"
+    for year, month, day, value in re.findall(pattern, match.group(1)):
+        date = datetime(int(year), int(month) + 1, int(day)).date().isoformat()
+        points.append({"date": date, "pe": round(float(value), 2)})
+    return points
+
+
+MONTH_ABBR_TO_NUMBER = {
+    "Jan": 1,
+    "Feb": 2,
+    "Mar": 3,
+    "Apr": 4,
+    "May": 5,
+    "Jun": 6,
+    "Jul": 7,
+    "Aug": 8,
+    "Sep": 9,
+    "Oct": 10,
+    "Nov": 11,
+    "Dec": 12,
+}
+
+
+def parse_trendonify_pe_points(html: str) -> list[dict]:
+    points: list[dict] = []
+    seen: set[str] = set()
+    pattern = r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(-?\d+(?:\.\d+)?)\b"
+    for month_text, year_text, value_text in re.findall(pattern, html):
+        year = int(year_text)
+        month = MONTH_ABBR_TO_NUMBER[month_text]
+        pe = float(value_text)
+        if pe <= 0:
+            continue
+        date = datetime(year, month, 1).date().isoformat()
+        if date in seen:
+            continue
+        seen.add(date)
+        points.append({"date": date, "pe": round(pe, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
+def load_trendonify_pe_points(index_code: str) -> list[dict]:
+    config = MARKET_INDEX_CONFIG[index_code]
+
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching {config['name']} PE history from Trendonify")
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                config["peUrl"],
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=3,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        return pd.DataFrame(parse_trendonify_pe_points(response.text))
+
+    df = get_ak_dataframe_cached(("market_index_pe", "trendonify", index_code), fetch)
+    if df is None or df.empty:
+        return []
+    df = df.copy()
+    df["pe"] = pd.to_numeric(df["pe"], errors="coerce")
+    df = df.dropna(subset=["date", "pe"])
+    df = df[df["pe"] > 0]
+    return sorted(df.to_dict("records"), key=lambda item: item["date"])
+
+
+def load_sp500_pe_points() -> list[dict]:
+    def fetch() -> pd.DataFrame:
+        print("[INFO] Fetching S&P 500 PE history from Multpl")
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                MARKET_INDEX_CONFIG["sp500"]["peUrl"],
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=3,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+            tables = pd.read_html(StringIO(response.text))
+        return tables[0] if tables else pd.DataFrame()
+
+    df = get_ak_dataframe_cached(("market_index_pe", "sp500"), fetch)
+    if df is None or df.empty:
+        return []
+    points = []
+    for row in df.itertuples(index=False):
+        row_dict = row._asdict()
+        date = pd.to_datetime(row_dict.get("Date"), errors="coerce")
+        pe = clean_market_number(row_dict.get("Value"))
+        if pd.isna(date) or pe <= 0:
+            continue
+        points.append({"date": date.date().isoformat(), "pe": round(pe, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
+def load_nasdaq100_pe_points() -> list[dict]:
+    def fetch() -> pd.DataFrame:
+        print("[INFO] Fetching Nasdaq 100 PE history from World PE Ratio")
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                MARKET_INDEX_CONFIG["nasdaq100"]["peUrl"],
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=3,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        return pd.DataFrame(parse_worldperatio_points(response.text))
+
+    df = get_ak_dataframe_cached(("market_index_pe", "nasdaq100"), fetch)
+    if df is None or df.empty:
+        return []
+    df = df.copy()
+    df["pe"] = pd.to_numeric(df["pe"], errors="coerce")
+    df = df.dropna(subset=["date", "pe"])
+    df = df[df["pe"] > 0]
+    return sorted(df.to_dict("records"), key=lambda item: item["date"])
+
+
+def load_legulegu_index_pe_points(symbol: str) -> list[dict]:
+    code = r"""
+import json
+import sys
+import akshare as ak
+
+symbol = sys.argv[1]
+df = ak.stock_index_pe_lg(symbol=symbol)
+records = df.to_dict(orient="records")
+print(json.dumps(records, ensure_ascii=False, default=str))
+"""
+    records = run_python_json_subprocess(code, symbol, timeout=12)
+    points: list[dict] = []
+    for row in records:
+        date = pd.to_datetime(row.get("日期"), errors="coerce")
+        pe = finite_float(row.get("滚动市盈率"))
+        if pd.notna(date) and pe > 0:
+            points.append({"date": date.date().isoformat(), "pe": round(pe, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
+def load_csindex_recent_pe_points(symbol: str) -> list[dict]:
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching CSIndex valuation, symbol={symbol}")
+        url = (
+            "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/"
+            f"autofile/indicator/{symbol}indicator.xls"
+        )
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=4,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        return pd.read_excel(BytesIO(response.content))
+
+    df = get_ak_dataframe_cached(("csindex_value", symbol), fetch)
+    if df is None or df.empty:
+        return []
+    df = df.copy()
+    if len(df.columns) >= 10:
+        df.columns = ["日期", "指数代码", "指数中文全称", "指数中文简称", "指数英文全称", "指数英文简称", "市盈率1", "市盈率2", "股息率1", "股息率2"]
+    points: list[dict] = []
+    for row in df.itertuples(index=False):
+        row_dict = row._asdict()
+        date = pd.to_datetime(row_dict.get("日期"), format="%Y%m%d", errors="coerce")
+        if pd.isna(date):
+            date = pd.to_datetime(row_dict.get("日期"), errors="coerce")
+        pe = finite_float(row_dict.get("市盈率2") or row_dict.get("市盈率1"))
+        if pd.notna(date) and pe > 0:
+            points.append({"date": date.date().isoformat(), "pe": round(pe, 2)})
+    return sorted(points, key=lambda item: item["date"])
+
+
+def load_china_index_pe_points(index_code: str) -> list[dict]:
+    config = MARKET_INDEX_CONFIG[index_code]
+    symbol = config["leguleguSymbol"]
+    try:
+        print(f"[INFO] Fetching China index PE history from Legulegu, symbol={symbol}")
+        points = load_legulegu_index_pe_points(symbol)
+        if points:
+            return points
+    except Exception as exc:
+        print(f"[WARN] Legulegu index PE unavailable: {symbol}: {exc}")
+    return load_csindex_recent_pe_points(config["csindexSymbol"])
+
+
+def load_cached_market_ten_year_yield() -> dict | None:
+    try:
+        for path in sorted(CACHE_DIR.glob("market_index_valuation_v*__*__*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            with path.open("r", encoding="utf-8") as cache_file:
+                payload = json.load(cache_file)
+            ten_year_yield = payload.get("summary", {}).get("tenYearYield")
+            if isinstance(ten_year_yield, dict) and ten_year_yield.get("value") is not None:
+                ten_year_yield = dict(ten_year_yield)
+                source = str(ten_year_yield.get("source") or "FRED DGS10")
+                ten_year_yield["source"] = source if "cached" in source else f"{source} cached"
+                return ten_year_yield
+    except Exception as exc:
+        print(f"[WARN] Cached US 10Y yield unavailable: {exc}")
+    return None
+
+
+def load_ten_year_yield() -> dict | None:
+    cached_ten_year_yield = load_cached_market_ten_year_yield()
+    if cached_ten_year_yield is not None:
+        return cached_ten_year_yield
+
+    def fetch() -> pd.DataFrame:
+        print("[INFO] Fetching US 10Y treasury yield from FRED")
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
+                timeout=2.5,
+                headers={"User-Agent": "Mozilla/5.0"},
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+            return pd.read_csv(StringIO(response.text))
+
+    try:
+        df = get_ak_dataframe_cached(("fred", "DGS10"), fetch)
+        if df is None or df.empty or "DGS10" not in df.columns:
+            return None
+        df = df.copy()
+        df["DGS10"] = pd.to_numeric(df["DGS10"], errors="coerce")
+        df = df.dropna(subset=["DGS10"])
+        if df.empty:
+            return None
+        row = df.iloc[-1]
+        return {
+            "date": str(row.get("observation_date") or ""),
+            "value": round(float(row["DGS10"]), 2),
+            "unit": "%",
+            "source": "FRED DGS10",
+        }
+    except Exception as exc:
+        print(f"[WARN] US 10Y yield unavailable: {exc}")
+        return load_cached_market_ten_year_yield()
+
+
+def load_market_index_price_points(config: dict) -> list[dict]:
+    try:
+        def fetch() -> pd.DataFrame:
+            print(f"[INFO] Fetching global index price history, symbol={config['priceSymbol']}")
+            with temporary_disable_proxy_env():
+                return ak.index_global_hist_em(symbol=config["priceSymbol"])
+
+        df = get_ak_dataframe_cached(("global_index_price", config["priceSymbol"]), fetch)
+        if df is None or df.empty:
+            return []
+        date_col = next((col for col in ["日期", "date", "Date"] if col in df.columns), None)
+        close_col = next((col for col in ["收盘", "收盘价", "最新价", "close", "Close"] if col in df.columns), None)
+        if not date_col or not close_col:
+            return []
+        points = []
+        for row in df.itertuples(index=False):
+            row_dict = row._asdict()
+            date = pd.to_datetime(row_dict.get(date_col), errors="coerce")
+            value = finite_float(row_dict.get(close_col))
+            if pd.notna(date) and value > 0:
+                points.append({"date": date.date().isoformat(), "value": round(value, 2)})
+        return sorted(points, key=lambda item: item["date"])
+    except Exception as exc:
+        print(f"[WARN] Index price history unavailable: {config.get('priceSymbol')}: {exc}")
+        return []
+
+
+def percentile_rank(values: list[float], current: float) -> float:
+    if not values:
+        return 0.0
+    return round(sum(1 for value in values if value <= current) / len(values), 4)
+
+
+def classify_valuation_zone(percentile: float) -> str:
+    if percentile >= 0.85:
+        return "extreme"
+    if percentile >= 0.60:
+        return "expensive"
+    if percentile >= 0.20:
+        return "fair"
+    return "cheap"
+
+
+def build_market_index_valuation_payload(index_code: str, years: int = 20) -> dict:
+    code = str(index_code or "sp500").lower()
+    alias_map = {
+        "nasdaq": "nasdaq100",
+        "hs300": "csi300",
+        "000300": "csi300",
+        "沪深300": "csi300",
+        "csi500": "csi500",
+        "zz500": "csi500",
+        "sh500": "csi500",
+        "000905": "csi500",
+        "中证500": "csi500",
+        "上证500": "csi500",
+        "930955": "dividend_low_vol_100",
+        "红利低波100": "dividend_low_vol_100",
+        "红利低波动100": "dividend_low_vol_100",
+        "dividend100": "dividend_low_vol_100",
+        "dividend_low_vol": "dividend_low_vol_100",
+    }
+    code = alias_map.get(code, code)
+    config = MARKET_INDEX_CONFIG.get(code, MARKET_INDEX_CONFIG["sp500"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        if code in {"csi300", "csi500"}:
+            pe_loader = lambda: load_china_index_pe_points(code)
+        elif code == "dividend_low_vol_100":
+            pe_loader = lambda: load_csindex_recent_pe_points(config["csindexSymbol"])
+        else:
+            pe_loader = load_nasdaq100_pe_points if code == "nasdaq100" else load_sp500_pe_points
+        pe_future = executor.submit(pe_loader)
+        ten_year_future = executor.submit(load_ten_year_yield)
+        pe_points = pe_future.result()
+        ten_year_yield = ten_year_future.result()
+
+    if not pe_points:
+        raise ValueError(f"Unable to fetch PE history for {config['displayName']}.")
+
+    cutoff = datetime.now().date() - timedelta(days=max(years, 1) * 365)
+    filtered_points = [point for point in pe_points if pd.to_datetime(point["date"]).date() >= cutoff]
+    if not filtered_points:
+        filtered_points = pe_points
+
+    values = [float(point["pe"]) for point in filtered_points if finite_float(point.get("pe")) > 0]
+    current = filtered_points[-1]
+    current_pe = float(current["pe"])
+    mean_pe = round(sum(values) / len(values), 2)
+    median_pe = round(float(pd.Series(values).median()), 2)
+    low_line = round(float(pd.Series(values).quantile(0.2)), 2)
+    high_line = round(float(pd.Series(values).quantile(0.8)), 2)
+    percentile = percentile_rank(values, current_pe)
+    earnings_yield = round(100 / current_pe, 2) if current_pe > 0 else 0
+    equity_risk_premium = (
+        round(earnings_yield - float(ten_year_yield["value"]), 2)
+        if ten_year_yield and ten_year_yield.get("value") is not None
+        else None
+    )
+    return {
+        "indexCode": code,
+        "indexName": config["name"],
+        "displayName": config["displayName"],
+        "status": "ok",
+        "sourceLabel": config["sourceLabel"],
+        "dataQuality": {
+            "peHistory": "available",
+            "eps": "not_used",
+            "interestRate": "available" if ten_year_yield else "not_connected",
+            "notes": [
+                "PE 使用公开网页月度序列，口径为 TTM 或站点披露的估算口径。",
+                config.get("sourceQuality", ""),
+                "当前页面只做 PE 历史分位、盈利收益率和 10Y 利率对比；不再为本页额外抓取指数点位历史，避免慢接口拖累加载。",
+            ],
+        },
+        "summary": {
+            "currentDate": current["date"],
+            "currentPe": round(current_pe, 2),
+            "meanPe": mean_pe,
+            "medianPe": median_pe,
+            "lowLine": low_line,
+            "highLine": high_line,
+            "percentile": percentile,
+            "valuationZone": classify_valuation_zone(percentile),
+            "earningsYield": earnings_yield,
+            "tenYearYield": ten_year_yield,
+            "equityRiskPremium": equity_risk_premium,
+            "years": years,
+        },
+        "peLine": filtered_points,
+        "priceLine": [],
+        "conclusion": f"{config['displayName']} 当前 PE 为 {current_pe:.2f}x，处于近 {years} 年历史分位 {percentile * 100:.1f}%。",
+        "sourceUrls": [config["peUrl"], "https://fred.stlouisfed.org/series/DGS10"],
+    }
+
+
+def get_market_index_valuation_payload_with_cache(index_code: str, years: int, refresh: bool = False) -> dict:
+    code = str(index_code or "sp500").lower()
+    alias_map = {
+        "nasdaq": "nasdaq100",
+        "hs300": "csi300",
+        "000300": "csi300",
+        "沪深300": "csi300",
+        "zz500": "csi500",
+        "sh500": "csi500",
+        "000905": "csi500",
+        "中证500": "csi500",
+        "上证500": "csi500",
+        "930955": "dividend_low_vol_100",
+        "红利低波100": "dividend_low_vol_100",
+        "红利低波动100": "dividend_low_vol_100",
+        "dividend100": "dividend_low_vol_100",
+        "dividend_low_vol": "dividend_low_vol_100",
+    }
+    code = alias_map.get(code, code)
+    current_cache = load_cached_payload("market_index_valuation_v3", code, years)
+    if current_cache is not None and not refresh:
+        return current_cache
+
+    stale_cache = load_latest_cached_payload(f"market_index_valuation_v*__{sanitize_cache_part(code)}__{sanitize_cache_part(years)}.json")
+    if stale_cache is not None and not refresh:
+        stale_cache = dict(stale_cache)
+        stale_cache["status"] = "stale_cache"
+        stale_cache.setdefault("dataQuality", {}).setdefault("notes", []).append("外部估值源较慢，当前先展示最近一次缓存数据。")
+        return stale_cache
+
+    try:
+        payload = build_market_index_valuation_payload(index_code=code, years=years)
+        save_cached_payload(payload, "market_index_valuation_v3", code, years)
+        return payload
+    except Exception as exc:
+        if stale_cache is not None:
+            stale_cache = dict(stale_cache)
+            stale_cache["status"] = "stale_cache"
+            stale_cache.setdefault("dataQuality", {}).setdefault("notes", []).append(f"外部估值源暂不可用，使用最近缓存：{exc}")
+            return stale_cache
+        raise
 
 
 def build_health_payload() -> dict:
@@ -1802,7 +2725,7 @@ def build_dashboard_data_payload(
         "profitMarketCap": lambda: get_profit_market_cap_payload_with_cache(stock=stock, years=years, refresh=refresh),
         "cashFlowQuality": lambda: get_cash_flow_quality_payload_with_cache(stock=stock, years=years, refresh=refresh),
         "revenueStructure": lambda: get_cached_payload_or_build(
-            "revenue_structure_v5",
+            "revenue_structure_v7",
             stock,
             years,
             builder=lambda: get_revenue_structure_payload(stock=stock, years=years),
@@ -3097,7 +4020,7 @@ def api_revenue_structure(stock: str = "600519", years: str = "8", refresh: str 
         years = normalize_years(years_param, default=8)
 
         return get_cached_payload_or_build(
-            "revenue_structure_v5",
+            "revenue_structure_v7",
             stock,
             years,
             builder=lambda: get_revenue_structure_payload(stock=stock, years=years),
@@ -3182,6 +4105,23 @@ def api_profit_driver_model(stock: str = "600519", refresh: str = ""):
         print(f"[ERROR] {exc}")
         return JSONResponse(
             {"error": str(exc), "stock": stock},
+            status_code=400,
+        )
+
+
+@app.get("/api/market-index-valuation")
+def api_market_index_valuation(index: str = "sp500", years: str = "20", refresh: str = ""):
+    try:
+        normalized_years = normalize_years(years, default=20)
+        return get_market_index_valuation_payload_with_cache(
+            index_code=index,
+            years=normalized_years,
+            refresh=refresh == "1",
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "index": index, "years": years},
             status_code=400,
         )
 

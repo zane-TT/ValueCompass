@@ -10,6 +10,7 @@ import {
 import * as echarts from "echarts";
 import {
   AiAnalysisSection,
+  AppShell,
   AutoConclusionStrip,
   BusinessModelSection,
   ChartPanel,
@@ -107,6 +108,102 @@ type ProfitDriverMetric = {
   sourcePriority: string[];
 };
 
+type ProfitDriverCalculation = {
+  status: string;
+  model: string;
+  segmentName: string;
+  reportYear?: number;
+  sourceData: {
+    businessItem: {
+      itemName?: string;
+      reportDate?: string;
+      revenueYi?: number;
+      costYi?: number;
+      grossProfitYi?: number;
+      grossMargin?: number;
+    };
+    reportedVolumeOrCapacity?: {
+      basis?: string;
+      label?: string;
+      volumeWanTon?: number;
+      volumeTon?: number;
+      sourceText?: string;
+    } | null;
+    baselineMarketPrice?: {
+      year?: number;
+      averageClosePrice?: number;
+      lastClosePrice?: number;
+      tradeDays?: number;
+      unit?: string;
+      source?: string;
+    } | null;
+    latestMarketPrice?: {
+      symbol?: string;
+      name?: string;
+      price?: number;
+      unit?: string;
+      time?: string;
+      source?: string;
+      fetchedAt?: string;
+    } | null;
+    ytdMarketPrice?: {
+      label?: string;
+      averageClosePrice?: number;
+      tradeDays?: number;
+      unit?: string;
+      source?: string;
+    } | null;
+    recent90dMarketPrice?: {
+      label?: string;
+      averageClosePrice?: number;
+      tradeDays?: number;
+      unit?: string;
+      source?: string;
+    } | null;
+    netProfitYi?: number | null;
+  };
+  derivedInputs: {
+    revenueImpliedSalesVolumeWanTon?: number;
+    conservativeVolumeWanTon?: number;
+    volumeBasis?: string;
+    impliedSellingPricePerTon?: number;
+    impliedCostPerTon?: number;
+    impliedGrossProfitPerTon?: number;
+    netProfitToGrossProfitRatio?: number | null;
+  };
+  result: {
+    baselineGrossProfitYi?: number;
+    estimatedGrossProfitYi?: number;
+    estimatedGrossProfitDeltaYi?: number;
+    estimatedNetProfitYi?: number | null;
+    currentPriceResetGrossProfitYi?: number;
+    currentPriceResetGrossProfitDeltaYi?: number;
+    currentPriceResetNetProfitYi?: number | null;
+    forecastHorizon?: string;
+    formula?: string;
+  };
+  forecast12m?: {
+    name: string;
+    forecastHorizon: string;
+    pricePerTon?: number;
+    volumeWanTon?: number;
+    costPerTon?: number;
+    grossProfitYi?: number;
+    grossProfitDeltaYi?: number;
+    netProfitYi?: number | null;
+    reason?: string;
+  }[];
+  assumptions?: string[];
+  predictionPlan?: {
+    headline?: string;
+    logic?: string[];
+    evidence?: string[];
+    confidence?: string;
+    watchItems?: string[];
+    risks?: string[];
+  };
+};
+
 type ProfitDriverSegment = {
   segmentName: string;
   driverModel: string;
@@ -119,6 +216,7 @@ type ProfitDriverSegment = {
   formula: string;
   description: string;
   dataStatus: string;
+  calculation?: ProfitDriverCalculation;
 };
 
 type ProfitDriverModelResponse = {
@@ -128,6 +226,7 @@ type ProfitDriverModelResponse = {
   source: "ai" | "rule";
   companyType: string;
   segments: ProfitDriverSegment[];
+  calculations?: ProfitDriverCalculation[];
   dataGaps: string[];
   knownDriverModels: string[];
 };
@@ -480,6 +579,11 @@ function formatPercent(value?: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatNumber(value?: number | null, digits = 2) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
 function formatYiValue(value: number) {
   return `${value.toFixed(2)} 亿元`;
 }
@@ -487,6 +591,210 @@ function formatYiValue(value: number) {
 function formatYiChange(value: number) {
   if (Math.abs(value) < 0.01) return "基本持平";
   return `${value > 0 ? "增加" : "减少"} ${Math.abs(value).toFixed(2)} 亿元`;
+}
+
+function getScenarioTone(name: string) {
+  if (name.includes("保守")) return "conservative";
+  if (name.includes("乐观")) return "optimistic";
+  return "neutral";
+}
+
+function buildDriverEvidenceItems(calculation: ProfitDriverCalculation) {
+  return [
+    {
+      label: "财报分部",
+      value: `${calculation.sourceData.businessItem.reportDate || calculation.reportYear || "-"} ${calculation.sourceData.businessItem.itemName || calculation.segmentName}`,
+      detail: `收入 ${formatNumber(calculation.sourceData.businessItem.revenueYi)} 亿，成本 ${formatNumber(
+        calculation.sourceData.businessItem.costYi
+      )} 亿，毛利 ${formatNumber(calculation.sourceData.businessItem.grossProfitYi)} 亿`,
+      status: "已使用",
+    },
+    {
+      label: "产能/销量口径",
+      value: `${calculation.sourceData.reportedVolumeOrCapacity?.label || "披露产销数据"} ${formatNumber(
+        calculation.sourceData.reportedVolumeOrCapacity?.volumeWanTon
+      )} 万吨`,
+      detail: `收入反推销量 ${formatNumber(
+        calculation.derivedInputs.revenueImpliedSalesVolumeWanTon
+      )} 万吨，预测采用 ${formatNumber(calculation.derivedInputs.conservativeVolumeWanTon)} 万吨`,
+      status: calculation.sourceData.reportedVolumeOrCapacity ? "已使用" : "替代口径",
+    },
+    {
+      label: "报告期铝价",
+      value: `${calculation.reportYear || "-"} 年 AL0 均价 ${formatNumber(
+        calculation.sourceData.baselineMarketPrice?.averageClosePrice,
+        0
+      )} 元/吨`,
+      detail: `交易日 ${calculation.sourceData.baselineMarketPrice?.tradeDays ?? "-"}，来源 ${
+        calculation.sourceData.baselineMarketPrice?.source || "-"
+      }`,
+      status: "已使用",
+    },
+    {
+      label: "未来价格假设",
+      value: `近90日均价 ${formatNumber(calculation.sourceData.recent90dMarketPrice?.averageClosePrice, 0)} 元/吨`,
+      detail: `年初以来 ${formatNumber(
+        calculation.sourceData.ytdMarketPrice?.averageClosePrice,
+        0
+      )} 元/吨，最新 ${formatNumber(calculation.sourceData.latestMarketPrice?.price, 0)} 元/吨`,
+      status: "已使用",
+    },
+    {
+      label: "成本替代口径",
+      value: `单吨成本 ${formatNumber(calculation.derivedInputs.impliedCostPerTon, 0)} 元/吨`,
+      detail: "由年报分部成本和保守销量反推，保守/中性情景加入成本压力。",
+      status: "替代口径",
+    },
+  ];
+}
+
+function ProfitDriverWorkbench({ profitDriverModel }: { profitDriverModel: ProfitDriverModelResponse }) {
+  const calculatedSegments = profitDriverModel.segments.filter((segment) => segment.calculation);
+
+  return (
+    <div className="driver-workbench revenue-section-card revenue-section-card-wide">
+      <div className="driver-workbench-header">
+        <div>
+          <div className="summary-kicker">预测工作台</div>
+          <h4>利润驱动数据与未来12个月预测</h4>
+        </div>
+        <div className="driver-workbench-badges">
+          <span>{profitDriverModel.source === "ai" ? "AI识别" : "规则识别"}</span>
+          <span>{calculatedSegments.length ? "已计算" : "待补数据"}</span>
+          <span>{Array.from(new Set(profitDriverModel.segments.map((segment) => segment.driverModelLabel))).join(" / ")}</span>
+        </div>
+      </div>
+
+      {calculatedSegments.length ? (
+        <div className="driver-segment-list">
+          {calculatedSegments.map((segment) => {
+            const calculation = segment.calculation!;
+            const neutralScenario =
+              calculation.forecast12m?.find((scenario) => scenario.name.includes("中性")) ||
+              calculation.forecast12m?.[1] ||
+              calculation.forecast12m?.[0];
+            const evidenceItems = buildDriverEvidenceItems(calculation);
+            const formulaSteps = [
+              `基准收入 ${formatNumber(calculation.sourceData.businessItem.revenueYi)} 亿 ÷ ${calculation.reportYear} 年 AL0 均价 ${formatNumber(
+                calculation.sourceData.baselineMarketPrice?.averageClosePrice,
+                0
+              )} 元/吨 = 收入反推销量 ${formatNumber(calculation.derivedInputs.revenueImpliedSalesVolumeWanTon)} 万吨`,
+              `基准成本 ${formatNumber(calculation.sourceData.businessItem.costYi)} 亿 ÷ 预测采用销量 ${formatNumber(
+                calculation.derivedInputs.conservativeVolumeWanTon
+              )} 万吨 = 单吨成本 ${formatNumber(calculation.derivedInputs.impliedCostPerTon, 0)} 元/吨`,
+              `中性预测 = ${formatNumber(neutralScenario?.volumeWanTon)} 万吨 × (${formatNumber(
+                neutralScenario?.pricePerTon,
+                0
+              )} - ${formatNumber(neutralScenario?.costPerTon, 0)}) 元/吨 = 毛利 ${formatNumber(
+                neutralScenario?.grossProfitYi
+              )} 亿`,
+            ];
+
+            return (
+              <section key={`${segment.segmentName}-${calculation.segmentName}`} className="driver-segment-panel">
+                <div className="driver-segment-topline">
+                  <div>
+                    <div className="driver-segment-label">{segment.driverModelLabel}</div>
+                    <h5>{segment.segmentName}</h5>
+                  </div>
+                  <div className="driver-result-stack">
+                    <span>中性毛利</span>
+                    <strong>{formatNumber(neutralScenario?.grossProfitYi)} 亿</strong>
+                    <em>较基准 {formatYiChange(neutralScenario?.grossProfitDeltaYi || 0)}</em>
+                  </div>
+                </div>
+
+                <div className="driver-scenario-table-wrap">
+                  <table className="driver-scenario-table">
+                    <thead>
+                      <tr>
+                        <th>情景</th>
+                        <th>价格</th>
+                        <th>销量</th>
+                        <th>单吨成本</th>
+                        <th>毛利</th>
+                        <th>较基准</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(calculation.forecast12m || []).map((scenario) => (
+                        <tr key={scenario.name} className={`scenario-${getScenarioTone(scenario.name)}`}>
+                          <td>
+                            <span>{scenario.name}</span>
+                            <small>{scenario.reason}</small>
+                          </td>
+                          <td>{formatNumber(scenario.pricePerTon, 0)} 元/吨</td>
+                          <td>{formatNumber(scenario.volumeWanTon)} 万吨</td>
+                          <td>{formatNumber(scenario.costPerTon, 0)} 元/吨</td>
+                          <td>{formatNumber(scenario.grossProfitYi)} 亿</td>
+                          <td>{formatYiChange(scenario.grossProfitDeltaYi || 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="driver-detail-grid">
+                  <div className="driver-detail-card driver-detail-card-wide">
+                    <div className="driver-detail-title">数据证据</div>
+                    <div className="driver-evidence-grid">
+                      {evidenceItems.map((item) => (
+                        <div key={item.label} className="driver-evidence-card">
+                          <div className="driver-evidence-head">
+                            <span>{item.label}</span>
+                            <em>{item.status}</em>
+                          </div>
+                          <strong>{item.value}</strong>
+                          <p>{item.detail}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="driver-detail-card">
+                    <div className="driver-detail-title">计算链路</div>
+                    <ol className="driver-formula-flow">
+                      {formulaSteps.map((step) => (
+                        <li key={step}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div className="driver-detail-card">
+                    <div className="driver-detail-title">预测方案</div>
+                    <p className="driver-plan-headline">{calculation.predictionPlan?.headline || "未来12个月情景预测"}</p>
+                    <div className="driver-plan-copy">{calculation.predictionPlan?.logic?.join("；")}</div>
+                    {calculation.result.currentPriceResetGrossProfitYi !== undefined ? (
+                      <div className="driver-reset-note">
+                        当前价静态重估：毛利 {formatNumber(calculation.result.currentPriceResetGrossProfitYi)} 亿，较基准{" "}
+                        {formatYiChange(calculation.result.currentPriceResetGrossProfitDeltaYi || 0)}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="driver-detail-card driver-detail-card-wide">
+                    <div className="driver-detail-title">风险与跟踪</div>
+                    <div className="driver-risk-list">
+                      {[...(calculation.predictionPlan?.watchItems || []), ...(calculation.predictionPlan?.risks || [])].map(
+                        (item) => (
+                          <span key={item}>{item}</span>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="driver-empty-state">
+          暂未形成可计算分部。已识别的数据需求：
+          {profitDriverModel.dataGaps?.length ? profitDriverModel.dataGaps.join("、") : "需要补充分部收入、成本、销量和外部行情。"}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function getYearEndPoints(points: FinancialPoint[]) {
@@ -875,7 +1183,6 @@ export default function HomePage() {
     ensureChart(peChartRef, peChart);
     ensureChart(profitChartRef, profitChart);
     ensureChart(cashFlowChartRef, cashFlowChart);
-
     const handleResize = () => {
       balanceChart.current?.resize();
       trendChart.current?.resize();
@@ -1691,7 +1998,7 @@ export default function HomePage() {
   const chartGridClass = `chart-grid custom-chart-grid count-${Math.min(selectedCharts.length, 5)}`;
 
   return (
-    <main className="page-shell">
+    <AppShell active="stocks">
       <QueryBar
         stock={stock}
         period={period}
@@ -1838,7 +2145,7 @@ export default function HomePage() {
               ) : null}
               {profitDriverModel?.segments?.length ? (
                 <div className="summary-copy">
-                  利润驱动模型：{profitDriverModel.segments.map((segment) => segment.driverModelLabel).join("、")}
+                  利润驱动模型：{Array.from(new Set(profitDriverModel.segments.map((segment) => segment.driverModelLabel))).join("、")}
                   {profitDriverModel.source === "ai" ? " · AI识别" : " · 规则识别"}
                 </div>
               ) : null}
@@ -1878,39 +2185,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            {profitDriverModel?.segments?.length ? (
-              <div className="revenue-section-card revenue-section-card-wide">
-                <h4>利润驱动数据清单</h4>
-                <div className="positioning-grid">
-                  {profitDriverModel.segments.slice(0, 3).map((segment) => (
-                    <div key={`${segment.segmentName}-${segment.driverModel}`} className="positioning-column">
-                      <div className="positioning-title">
-                        {segment.segmentName} · {segment.driverModelLabel}
-                      </div>
-                      <div className="positioning-item">
-                        <div className="positioning-item-label">计算框架</div>
-                        <div className="positioning-item-detail">{segment.formula}</div>
-                      </div>
-                      <div className="positioning-item">
-                        <div className="positioning-item-label">需要抓取的市场数据</div>
-                        <div className="positioning-item-detail">
-                          {segment.requiredMarketData.length
-                            ? segment.requiredMarketData.map((metric) => metric.label).join("、")
-                            : "暂无专用外部行情，先使用财报经营数据。"}
-                        </div>
-                      </div>
-                      <div className="positioning-item">
-                        <div className="positioning-item-label">需要抽取的经营数据</div>
-                        <div className="positioning-item-detail">{segment.requiredOperatingData.join("、")}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {profitDriverModel.dataGaps?.length ? (
-                  <div className="summary-copy">数据缺口：{profitDriverModel.dataGaps.join("、")}</div>
-                ) : null}
-              </div>
-            ) : null}
+            {profitDriverModel?.segments?.length ? <ProfitDriverWorkbench profitDriverModel={profitDriverModel} /> : null}
 
             <div className="revenue-section-card revenue-section-card-wide">
               <h4>证据链</h4>
@@ -2053,6 +2328,6 @@ export default function HomePage() {
         </div>
         </SystemStatus>
       </section>
-    </main>
+    </AppShell>
   );
 }
