@@ -3495,12 +3495,12 @@ def build_market_index_valuation_payload(index_code: str, years: int = 20) -> di
 
 
 def ensure_market_index_history_span(index_code: str, years: int, pe_points: list[dict]) -> None:
-    if index_code not in {"csi300", "csi500"} or years < 5 or not pe_points:
+    if years < 5 or not pe_points:
         return
 
     dates = [pd.to_datetime(point.get("date"), errors="coerce").date() for point in pe_points]
     dates = [date for date in dates if pd.notna(date)]
-    if len(dates) < 120:
+    if len(dates) < 12:
         raise ValueError(f"{index_code} PE 历史样本过短，不能用于 {years} 年历史分位。")
     span_days = (max(dates) - min(dates)).days
     required_days = years * 365 * 0.7
