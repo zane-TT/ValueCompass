@@ -87,8 +87,9 @@ export default function MarketValuationClient() {
     setIsMarketIndexLoading(true);
     setMarketIndexStatus("正在加载大盘估值数据...");
     setMarketIndexError(null);
+    setMarketIndexData(null);
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
     try {
       const params = new URLSearchParams({ index: indexCode, years: rangeYears });
       if (refresh) params.set("refresh", "1");
