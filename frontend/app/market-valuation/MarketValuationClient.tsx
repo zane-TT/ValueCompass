@@ -81,14 +81,19 @@ export default function MarketValuationClient() {
   const [isMarketIndexLoading, setIsMarketIndexLoading] = useState(false);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chart = useRef<echarts.ECharts | null>(null);
+  const marketIndexAbortRef = useRef<AbortController | null>(null);
+  const marketIndexRequestIdRef = useRef(0);
 
   async function loadMarketIndexData(indexCode = marketIndexCode, rangeYears = marketIndexYears, refresh = false) {
-    if (isMarketIndexLoading) return;
+    marketIndexAbortRef.current?.abort();
+    const requestId = marketIndexRequestIdRef.current + 1;
+    marketIndexRequestIdRef.current = requestId;
     setIsMarketIndexLoading(true);
     setMarketIndexStatus("正在加载大盘估值数据...");
     setMarketIndexError(null);
     setMarketIndexData(null);
     const controller = new AbortController();
+    marketIndexAbortRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 20000);
     try {
       const params = new URLSearchParams({ index: indexCode, years: rangeYears });
@@ -98,15 +103,20 @@ export default function MarketValuationClient() {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = (await response.json()) as MarketIndexValuationResponse;
+      if (marketIndexRequestIdRef.current !== requestId) return;
       setMarketIndexData(data);
       setMarketIndexStatus(data.status === "stale_cache" ? "已使用最近缓存数据" : "大盘估值数据已加载");
     } catch (error) {
+      if (marketIndexRequestIdRef.current !== requestId) return;
       const message = error instanceof DOMException && error.name === "AbortError" ? "请求超时，请确认后端服务是否启动" : error instanceof Error ? error.message : "未知错误";
       setMarketIndexError(message);
       setMarketIndexStatus("大盘估值数据加载失败");
     } finally {
       window.clearTimeout(timeout);
-      setIsMarketIndexLoading(false);
+      if (marketIndexRequestIdRef.current === requestId) {
+        marketIndexAbortRef.current = null;
+        setIsMarketIndexLoading(false);
+      }
     }
   }
 
