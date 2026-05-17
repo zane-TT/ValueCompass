@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { AppShell, QueryBar, SectionShell } from "../components";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AppShell, SectionShell } from "../components";
 
 const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim();
 const API_BASE = configuredApiBase || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
 
+type IndustryCell = string | number | boolean | null;
+
 type IndustryTablePreview = {
   status: "ok" | "empty" | "error" | string;
   columns: string[];
-  rows: Array<Record<string, string | number | boolean | null>>;
+  rows: Array<Record<string, IndustryCell>>;
   rowCount?: number;
   error?: string;
 };
@@ -47,32 +49,49 @@ type IndustryDataResponse = {
   fetchedAt?: string;
 };
 
-type IndustryChoice = {
-  value: string;
-  label: string;
-  hint: string;
+type QueryState = {
+  stock: string;
+  years: string;
+  industries: string;
 };
 
-const INDUSTRY_CHOICES: IndustryChoice[] = [
-  { value: "auto", label: "自动识别", hint: "根据公司画像和主营构成选择模块" },
-  { value: "baijiu", label: "白酒", hint: "销量、渠道、库存、价格带" },
-  { value: "nonferrous_chemical", label: "有色/化工", hint: "商品价格、能源成本、产销披露" },
-  { value: "shipping", label: "航运", hint: "运价指数、燃油、吞吐量" },
-  { value: "financial", label: "金融", hint: "利率、社融、保险收入、公司金融指标" },
-  { value: "game_internet", label: "游戏/互联网", hint: "用户、流水、版号和票房代理" },
-  { value: "auto_new_energy", label: "汽车新能源", hint: "乘联会、出口、电池材料" },
-];
+type MetricPoint = {
+  label: string;
+  value: number;
+};
 
-const PRESET_STOCKS = [
-  { code: "600519", label: "贵州茅台" },
-  { code: "601600", label: "中国铝业" },
-  { code: "601919", label: "中远海控" },
-  { code: "002594", label: "比亚迪" },
-  { code: "601288", label: "农业银行" },
-  { code: "300052", label: "中青宝" },
-];
+type MonitorMetric = {
+  id: string;
+  moduleKey: string;
+  moduleLabel: string;
+  groupTitle?: string;
+  title: string;
+  status: string;
+  source?: string;
+  valueLabel: string;
+  value: number | null;
+  previousValue: number | null;
+  delta: number | null;
+  deltaPct: number | null;
+  dateLabel: string;
+  unit: string;
+  points: MetricPoint[];
+  rows: IndustryTablePreview["rows"];
+  columns: string[];
+  error?: string;
+};
 
-const INDUSTRY_MODULE_LABELS: Record<string, string> = {
+type ExtractedMetric = {
+  id: string;
+  moduleKey: string;
+  moduleLabel: string;
+  title: string;
+  value: number | null;
+  unit: string;
+  sourceText: string;
+};
+
+const MODULE_LABELS: Record<string, string> = {
   baijiu: "白酒",
   nonferrous_chemical: "有色/化工",
   shipping: "航运",
@@ -81,34 +100,19 @@ const INDUSTRY_MODULE_LABELS: Record<string, string> = {
   auto_new_energy: "汽车新能源",
 };
 
-const INDICATOR_GROUPS = [
-  {
-    key: "macroOperatingIndicators",
-    title: "宏观经营",
-    description: "工业增加值、PMI、PPI、用电量和企业景气，判断行业需求温度。",
-    tone: "demand",
-  },
-  {
-    key: "customsTradeIndicators",
-    title: "海关进出口",
-    description: "出口、进口、贸易差额，辅助判断外需和进出口链条压力。",
-    tone: "trade",
-  },
-  {
-    key: "energyCostIndicators",
-    title: "能源成本",
-    description: "油价、能源库存、能源指数和碳市场，观察成本端和碳约束。",
-    tone: "cost",
-  },
-];
+const GROUP_LABELS: Record<string, string> = {
+  macroOperatingIndicators: "需求景气",
+  customsTradeIndicators: "进出口",
+  energyCostIndicators: "能源成本",
+};
 
-const INDUSTRY_TABLE_LABELS: Record<string, string> = {
+const TABLE_LABELS: Record<string, string> = {
   industrialProductionYoy: "工业增加值同比",
   industrialValueAdded: "工业增加值",
   manufacturingPmi: "制造业 PMI",
   ppi: "PPI",
-  electricityConsumption: "全社会用电",
-  enterpriseBoomIndex: "企业景气",
+  electricityConsumption: "全社会用电量",
+  enterpriseBoomIndex: "企业景气指数",
   customsImportExportOverview: "进出口总览",
   exportsYoyUsd: "出口同比",
   importsYoyUsd: "进口同比",
@@ -120,6 +124,12 @@ const INDUSTRY_TABLE_LABELS: Record<string, string> = {
   commodityPrices: "商品价格",
   freightIndices: "航运指数",
   fuelPrices: "燃油价格",
+  bdi: "BDI",
+  bci: "BCI",
+  bpi: "BPI",
+  bcti: "BCTI",
+  bdti: "BDTI",
+  chinaFreightIndex: "中国运价指数",
   cpcaTotalRetail: "乘用车零售",
   cpcaTotalWholesale: "乘用车批发",
   cpcaTotalExport: "乘用车出口",
@@ -133,7 +143,29 @@ const INDUSTRY_TABLE_LABELS: Record<string, string> = {
   movieBoxOfficeProxy: "票房代理",
 };
 
-function readQueryState() {
+const DATE_KEYWORDS = ["日期", "月份", "时间", "报告期", "period", "date", "month", "time"];
+const VALUE_PRIORITY = [
+  "今值",
+  "最新价",
+  "现价",
+  "收盘价",
+  "价格",
+  "close",
+  "value",
+  "指数",
+  "当月出口额-同比增长",
+  "当月进口额-同比增长",
+  "贸易差额",
+  "成交均价",
+  "成交价",
+  "收盘",
+  "累计",
+  "同比",
+  "环比",
+  "金额",
+];
+
+function readQueryState(): QueryState {
   if (typeof window === "undefined") return { stock: "600519", years: "8", industries: "auto" };
   const params = new URLSearchParams(window.location.search);
   return {
@@ -148,103 +180,250 @@ function formatNumber(value?: number | null, digits = 2) {
   return value.toLocaleString("zh-CN", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
-function formatIndustryCell(value: string | number | boolean | null | undefined) {
+function formatCell(value: IndustryCell | undefined) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") return Number.isFinite(value) ? formatNumber(value, Math.abs(value) >= 100 ? 0 : 2) : "-";
   return String(value);
 }
 
-function isIndicatorGroup(value: unknown): value is IndustryIndicatorGroup {
-  return Boolean(value && typeof value === "object" && "tables" in value && "source" in value);
+function toNumber(value: IndustryCell | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/,/g, "").replace(/%/g, "").trim();
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isTablePreview(value: unknown): value is IndustryTablePreview {
   return Boolean(value && typeof value === "object" && "rows" in value && "columns" in value && "status" in value);
 }
 
-function getRowPreview(row: Record<string, string | number | boolean | null>, columns: string[]) {
-  const preferredColumns = columns.length ? columns : Object.keys(row);
-  return preferredColumns.slice(0, 4).map((column) => ({
-    column,
-    value: formatIndustryCell(row[column]),
-  }));
+function isIndicatorGroup(value: unknown): value is IndustryIndicatorGroup {
+  return Boolean(value && typeof value === "object" && "tables" in value && "source" in value);
 }
 
-function summarizeTable(table?: IndustryTablePreview) {
-  if (!table) return "未返回";
-  if (table.status === "error") return table.error || "接口异常";
-  if (table.status === "empty") return "暂无数据";
-  const rowCount = table.rowCount ?? table.rows?.length ?? 0;
-  return `${rowCount} 行`;
+function findDateColumn(columns: string[]) {
+  return columns.find((column) => DATE_KEYWORDS.some((keyword) => column.toLowerCase().includes(keyword.toLowerCase())));
 }
 
-function collectCommonGroups(industryData?: IndustryDataResponse | null) {
-  const modules = Object.entries(industryData?.data ?? {});
-  return INDICATOR_GROUPS.map((group) => {
-    const owner = modules.find(([, payload]) => isIndicatorGroup(payload.metrics?.[group.key]));
-    const indicator = owner ? (owner[1].metrics?.[group.key] as IndustryIndicatorGroup) : null;
-    return {
-      ...group,
-      moduleKey: owner?.[0] ?? "",
-      moduleLabel: owner ? INDUSTRY_MODULE_LABELS[owner[0]] || owner[0] : "",
-      indicator,
-    };
+function numericColumns(table: IndustryTablePreview) {
+  return table.columns.filter((column) => table.rows.some((row) => toNumber(row[column]) !== null));
+}
+
+function scoreValueColumn(column: string) {
+  const normalized = column.toLowerCase();
+  const index = VALUE_PRIORITY.findIndex((keyword) => normalized.includes(keyword.toLowerCase()));
+  return index === -1 ? VALUE_PRIORITY.length + normalized.length / 100 : index;
+}
+
+function findValueColumn(table: IndustryTablePreview) {
+  const dateColumn = findDateColumn(table.columns);
+  const candidates = numericColumns(table).filter((column) => column !== dateColumn);
+  return candidates.sort((left, right) => scoreValueColumn(left) - scoreValueColumn(right))[0] || candidates[0] || "";
+}
+
+function inferUnit(column: string, value: number | null) {
+  if (column.includes("%") || column.includes("同比") || column.includes("环比") || column.toLowerCase().includes("rate")) return "%";
+  if (column.includes("价格") || column.includes("价") || column.includes("金额") || column.includes("收入")) return "";
+  if (column.toLowerCase().includes("pmi")) return "";
+  if (value !== null && Math.abs(value) <= 100 && (column.includes("今值") || column.includes("前值"))) return "%";
+  return "";
+}
+
+function buildPoints(table: IndustryTablePreview, valueColumn: string, dateColumn?: string): MetricPoint[] {
+  if (!valueColumn) return [];
+  return table.rows
+    .map((row, index) => ({
+      label: dateColumn ? formatCell(row[dateColumn]) : String(index + 1),
+      value: toNumber(row[valueColumn]),
+    }))
+    .filter((point): point is MetricPoint => point.value !== null);
+}
+
+function buildMetricFromTable(
+  moduleKey: string,
+  groupKey: string | null,
+  tableKey: string,
+  table: IndustryTablePreview,
+  source?: string,
+): MonitorMetric {
+  const valueColumn = findValueColumn(table);
+  const dateColumn = findDateColumn(table.columns);
+  const points = buildPoints(table, valueColumn, dateColumn);
+  const latestPoint = points[points.length - 1];
+  const previousPoint = points[points.length - 2];
+  const delta = latestPoint && previousPoint ? latestPoint.value - previousPoint.value : null;
+  const deltaPct = latestPoint && previousPoint && previousPoint.value !== 0 ? (delta! / Math.abs(previousPoint.value)) * 100 : null;
+  const moduleLabel = MODULE_LABELS[moduleKey] || moduleKey;
+  return {
+    id: `${moduleKey}-${groupKey || "special"}-${tableKey}`,
+    moduleKey,
+    moduleLabel,
+    groupTitle: groupKey ? GROUP_LABELS[groupKey] || groupKey : undefined,
+    title: TABLE_LABELS[tableKey] || tableKey,
+    status: table.status,
+    source,
+    valueLabel: valueColumn || "数值",
+    value: latestPoint?.value ?? null,
+    previousValue: previousPoint?.value ?? null,
+    delta,
+    deltaPct,
+    dateLabel: latestPoint?.label || "-",
+    unit: inferUnit(valueColumn, latestPoint?.value ?? null),
+    points,
+    rows: table.rows,
+    columns: table.columns,
+    error: table.error,
+  };
+}
+
+function collectMonitorMetrics(industryData?: IndustryDataResponse | null) {
+  const metrics: MonitorMetric[] = [];
+  Object.entries(industryData?.data ?? {}).forEach(([moduleKey, modulePayload]) => {
+    Object.entries(modulePayload.metrics ?? {}).forEach(([metricKey, metricValue]) => {
+      if (isIndicatorGroup(metricValue)) {
+        Object.entries(metricValue.tables ?? {}).forEach(([tableKey, table]) => {
+          metrics.push(buildMetricFromTable(moduleKey, metricKey, tableKey, table, metricValue.source));
+        });
+        return;
+      }
+      if (isTablePreview(metricValue)) {
+        metrics.push(buildMetricFromTable(moduleKey, null, metricKey, metricValue, modulePayload.source?.join("、")));
+      }
+    });
   });
+  return metrics;
 }
 
-function collectSpecialTables(modulePayload?: IndustryModulePayload) {
-  const metrics = modulePayload?.metrics ?? {};
-  return Object.entries(metrics).filter(([, value]) => isTablePreview(value) || (value && typeof value === "object"));
+function collectExtractedMetrics(industryData?: IndustryDataResponse | null) {
+  const extracted: ExtractedMetric[] = [];
+  Object.entries(industryData?.data ?? {}).forEach(([moduleKey, modulePayload]) => {
+    const moduleLabel = MODULE_LABELS[moduleKey] || moduleKey;
+    const reportMetrics = modulePayload.metrics?.reportExtractedMetrics;
+    if (!reportMetrics || typeof reportMetrics !== "object") return;
+    Object.entries(reportMetrics as Record<string, unknown>).forEach(([metricKey, value]) => {
+      if (!Array.isArray(value)) return;
+      value.slice(0, 3).forEach((item, index) => {
+        if (!item || typeof item !== "object") return;
+        const record = item as Record<string, unknown>;
+        extracted.push({
+          id: `${moduleKey}-${metricKey}-${index}`,
+          moduleKey,
+          moduleLabel,
+          title: TABLE_LABELS[metricKey] || metricKey,
+          value: typeof record.value === "number" ? record.value : null,
+          unit: typeof record.unit === "string" ? record.unit : "",
+          sourceText: typeof record.sourceText === "string" ? record.sourceText : "",
+        });
+      });
+    });
+  });
+  return extracted;
 }
 
-function renderTableCard(tableKey: string, table: IndustryTablePreview) {
+function Sparkline({ points }: { points: MetricPoint[] }) {
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const polyline = values
+    .map((value, index) => {
+      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
+      const y = 34 - ((value - min) / range) * 28;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
   return (
-    <div key={tableKey} className="industry-table-card">
-      <div className="industry-table-title">
-        <span>{INDUSTRY_TABLE_LABELS[tableKey] || tableKey}</span>
-        <em>{summarizeTable(table)}</em>
-      </div>
-      {table.rows?.slice(0, 3).map((row, rowIndex) => (
-        <div key={`${tableKey}-${rowIndex}`} className="industry-row-preview">
-          {getRowPreview(row, table.columns).map((item) => (
-            <span key={`${tableKey}-${rowIndex}-${item.column}`}>
-              <b>{item.column}</b>
-              {item.value}
-            </span>
-          ))}
+    <svg className="industry-sparkline" viewBox="0 0 100 40" role="img" aria-label="趋势图">
+      <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+      {values.map((value, index) => {
+        const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
+        const y = 34 - ((value - min) / range) * 28;
+        return <circle key={`${value}-${index}`} cx={x} cy={y} r={index === values.length - 1 ? 3 : 1.8} />;
+      })}
+    </svg>
+  );
+}
+
+function MetricCard({ metric }: { metric: MonitorMetric }) {
+  const trendClass = metric.delta === null ? "flat" : metric.delta > 0 ? "up" : metric.delta < 0 ? "down" : "flat";
+  return (
+    <article className={`industry-monitor-card trend-${trendClass}`}>
+      <div className="industry-monitor-card-top">
+        <div>
+          <div className="industry-monitor-eyebrow">
+            {metric.moduleLabel}
+            {metric.groupTitle ? ` / ${metric.groupTitle}` : ""}
+          </div>
+          <h3>{metric.title}</h3>
         </div>
-      ))}
-      {table.status === "error" ? <div className="industry-error-text">{table.error}</div> : null}
+        <span className="industry-status-chip">{metric.status}</span>
+      </div>
+      <div className="industry-monitor-value-row">
+        <div>
+          <div className="industry-monitor-value">
+            {formatNumber(metric.value, Math.abs(metric.value ?? 0) >= 100 ? 0 : 2)}
+            {metric.unit ? <small>{metric.unit}</small> : null}
+          </div>
+          <div className="industry-monitor-date">{metric.dateLabel}</div>
+        </div>
+        <div className="industry-monitor-delta">
+          <span>{metric.delta === null ? "持平/缺少上期" : `${metric.delta > 0 ? "+" : ""}${formatNumber(metric.delta, 2)}`}</span>
+          <small>{metric.deltaPct === null ? metric.valueLabel : `${metric.deltaPct > 0 ? "+" : ""}${formatNumber(metric.deltaPct, 2)}%`}</small>
+        </div>
+      </div>
+      <Sparkline points={metric.points} />
+      <div className="industry-monitor-foot">
+        <span>{metric.valueLabel}</span>
+        <span>{metric.points.length} 个观测点</span>
+      </div>
+      {metric.error ? <div className="industry-error-text">{metric.error}</div> : null}
+    </article>
+  );
+}
+
+function DetailTable({ metric }: { metric: MonitorMetric }) {
+  const visibleColumns = metric.columns.slice(0, 5);
+  return (
+    <div className="industry-detail-table">
+      <div className="industry-detail-title">
+        <span>{metric.title}</span>
+        <em>{metric.moduleLabel}</em>
+      </div>
+      <div className="industry-detail-grid" style={{ gridTemplateColumns: `repeat(${Math.max(visibleColumns.length, 1)}, minmax(0, 1fr))` }}>
+        {visibleColumns.map((column) => (
+          <b key={`${metric.id}-${column}`}>{column}</b>
+        ))}
+        {metric.rows.slice(-4).map((row, rowIndex) =>
+          visibleColumns.map((column) => (
+            <span key={`${metric.id}-${rowIndex}-${column}`}>{formatCell(row[column])}</span>
+          )),
+        )}
+      </div>
     </div>
   );
 }
 
 export default function IndustryMonitorClient() {
   const initialQuery = useRef(readQueryState());
-  const [stock, setStock] = useState(initialQuery.current.stock);
-  const [years, setYears] = useState(initialQuery.current.years);
-  const [period, setPeriod] = useState("");
-  const [industries, setIndustries] = useState(initialQuery.current.industries);
   const [industryData, setIndustryData] = useState<IndustryDataResponse | null>(null);
-  const [status, setStatus] = useState("等待加载行业经营数据");
+  const [status, setStatus] = useState("正在加载行业数据");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
 
-  const commonGroups = collectCommonGroups(industryData);
-  const combinedError = error || "";
+  const monitorMetrics = useMemo(() => collectMonitorMetrics(industryData), [industryData]);
+  const extractedMetrics = useMemo(() => collectExtractedMetrics(industryData), [industryData]);
+  const headlineMetrics = monitorMetrics.filter((metric) => metric.value !== null).slice(0, 9);
+  const detailMetrics = monitorMetrics.slice(0, 8);
   const activeModules = industryData?.industries ?? [];
-  const activeCompanyName = activeModules.length
-    ? activeModules.map((item) => INDUSTRY_MODULE_LABELS[item] || item).join("、")
-    : "";
+  const moduleText = activeModules.map((item) => MODULE_LABELS[item] || item).join("、") || "自动识别";
 
-  function syncUrl(nextStock: string, nextYears: string, nextIndustries: string) {
-    const params = new URLSearchParams({ stock: nextStock, years: nextYears, industries: nextIndustries });
-    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }
-
-  async function loadIndustryData(nextStock = stock, nextYears = years, nextIndustries = industries, refresh = false) {
+  async function loadIndustryData(refresh = false) {
     abortRef.current?.abort();
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
@@ -252,26 +431,24 @@ export default function IndustryMonitorClient() {
     abortRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 30000);
     setIsLoading(true);
-    setStatus("正在加载行业经营数据...");
+    setStatus(refresh ? "正在刷新行业数据" : "正在加载行业数据");
     setError(null);
-    setIndustryData(null);
-    syncUrl(nextStock, nextYears, nextIndustries);
 
     try {
       const params = new URLSearchParams({
-        stock: nextStock.trim() || "600519",
-        years: nextYears.trim() || "8",
-        industries: nextIndustries,
+        stock: initialQuery.current.stock,
+        years: initialQuery.current.years,
+        industries: initialQuery.current.industries,
       });
       if (refresh) params.set("refresh", "1");
       const response = await fetch(`${API_BASE}/api/industry-data?${params.toString()}`, {
         signal: controller.signal,
       });
       const payload = (await response.json()) as IndustryDataResponse & { error?: string };
-      if (!response.ok) throw new Error(payload.error || "行业经营数据接口请求失败");
+      if (!response.ok) throw new Error(payload.error || "行业数据接口请求失败");
       if (requestId !== requestIdRef.current) return;
       setIndustryData(payload);
-      setStatus(payload.status === "partial" ? "部分行业数据已加载" : "行业经营数据已加载");
+      setStatus(payload.status === "partial" ? "部分数据已返回" : "数据已更新");
     } catch (fetchError) {
       if (requestId !== requestIdRef.current) return;
       const message =
@@ -279,9 +456,9 @@ export default function IndustryMonitorClient() {
           ? "请求超时，请确认后端服务是否可用"
           : fetchError instanceof Error
             ? fetchError.message
-            : "行业经营数据加载失败";
+            : "行业数据加载失败";
       setError(message);
-      setStatus("行业经营数据加载失败");
+      setStatus("行业数据加载失败");
     } finally {
       window.clearTimeout(timeout);
       if (requestId === requestIdRef.current) {
@@ -292,164 +469,92 @@ export default function IndustryMonitorClient() {
   }
 
   useEffect(() => {
-    void loadIndustryData(initialQuery.current.stock, initialQuery.current.years, initialQuery.current.industries);
+    void loadIndustryData(false);
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <AppShell active="industry">
-      <QueryBar
-        stock={stock}
-        period={period}
-        years={years}
-        activeCompanyName={activeCompanyName}
-        presets={PRESET_STOCKS}
-        isLoading={isLoading}
-        combinedError={combinedError}
-        onStockChange={setStock}
-        onPeriodChange={setPeriod}
-        onYearsChange={setYears}
-        onQuery={() => void loadIndustryData()}
-        onPresetSelect={(presetStock) => {
-          setStock(presetStock);
-          void loadIndustryData(presetStock, years, industries);
-        }}
-      />
-
       <SectionShell
         title="行业监控"
-        description="把公司主营业务、行业需求、进出口和成本变量放在同一个看板里，观察利润驱动是否顺风。"
-        meta={industryData?.fetchedAt ? new Date(industryData.fetchedAt).toLocaleString() : "实时查询"}
+        description="直接展示行业指标最新值、上期变化和短期趋势，不做搜索入口。"
+        meta={industryData?.fetchedAt ? new Date(industryData.fetchedAt).toLocaleString() : moduleText}
         action={
           <button
             type="button"
             className="query-button secondary-button"
             disabled={isLoading}
-            onClick={() => void loadIndustryData(stock, years, industries, true)}
+            onClick={() => void loadIndustryData(true)}
           >
-            强制刷新
+            刷新数据
           </button>
         }
       >
-        <div className="status">{status}</div>
+        <div className="industry-monitor-summary">
+          <div>
+            <span>监控对象</span>
+            <strong>{initialQuery.current.stock}</strong>
+          </div>
+          <div>
+            <span>行业模块</span>
+            <strong>{moduleText}</strong>
+          </div>
+          <div>
+            <span>可读指标</span>
+            <strong>{headlineMetrics.length}</strong>
+          </div>
+          <div>
+            <span>状态</span>
+            <strong>{status}</strong>
+          </div>
+        </div>
+        {error ? <div className="error-box">{error}</div> : null}
 
-        <div className="industry-choice-grid">
-          {INDUSTRY_CHOICES.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              className={`industry-choice-button ${industries === item.value ? "active" : ""}`}
-              disabled={isLoading}
-              onClick={() => {
-                setIndustries(item.value);
-                void loadIndustryData(stock, years, item.value);
-              }}
-            >
-              <span>{item.label}</span>
-              <small>{item.hint}</small>
-            </button>
+        <div className="industry-monitor-grid">
+          {headlineMetrics.map((metric) => (
+            <MetricCard key={metric.id} metric={metric} />
           ))}
-        </div>
-
-        <div className="industry-overview-grid">
-          {commonGroups.map((group) => {
-            const tables = Object.values(group.indicator?.tables ?? {});
-            const okCount = tables.filter((table) => table.status === "ok").length;
-            return (
-              <div key={group.key} className={`mini-metric-card industry-kpi-card industry-group-${group.tone}`}>
-                <div className="mini-metric-label">{group.title}</div>
-                <div className="mini-metric-value">{group.indicator ? `${okCount}/${tables.length}` : "-"}</div>
-                <div className="mini-metric-sub">
-                  {group.indicator ? "可用表格" : "等待接口返回"}
-                  {group.moduleLabel ? ` · ${group.moduleLabel}` : ""}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="industry-data-grid">
-          {commonGroups.map((group) => {
-            const tables = Object.entries(group.indicator?.tables ?? {});
-            return (
-              <div key={group.key} className={`revenue-section-card industry-group-card industry-group-${group.tone}`}>
-                <div className="industry-group-header">
-                  <div>
-                    <h4>{group.title}</h4>
-                    <div className="subtle">{group.description}</div>
-                  </div>
-                  <div className="industry-status-chip">{group.indicator?.status || "未加载"}</div>
-                </div>
-                <div className="industry-source-line">
-                  {group.indicator?.source || "等待行业数据接口返回"}
-                  {group.moduleLabel ? ` · 来自 ${group.moduleLabel} 模块` : ""}
-                </div>
-                {tables.length ? (
-                  <div className="industry-table-grid">
-                    {tables.map(([tableKey, table]) => renderTableCard(tableKey, table))}
-                  </div>
-                ) : (
-                  <div className="subtle">这个数据包还没有可展示的表格。</div>
-                )}
-                {group.indicator?.dataGaps?.length ? (
-                  <div className="industry-gap-line">{group.indicator.dataGaps.join("；")}</div>
-                ) : null}
-              </div>
-            );
-          })}
+          {!headlineMetrics.length ? (
+            <div className="revenue-section-card revenue-section-card-wide">
+              <h4>暂无可展示数值</h4>
+              <div className="subtle">后端已返回数据时，会在这里展示最新值和趋势图。</div>
+            </div>
+          ) : null}
         </div>
       </SectionShell>
 
-      <SectionShell
-        title="行业专项数据"
-        description="每个识别出的行业模块会追加自己的经营指标，例如商品价格、航运指数、汽车销量、金融利率或票房代理数据。"
-        meta={activeModules.map((item) => INDUSTRY_MODULE_LABELS[item] || item).join("、") || "等待识别"}
-      >
-        <div className="industry-module-grid">
-          {Object.entries(industryData?.data ?? {}).map(([moduleKey, modulePayload]) => {
-            const metricEntries = collectSpecialTables(modulePayload);
-            const commonKeys = new Set(INDICATOR_GROUPS.map((item) => item.key));
-            const specialEntries = metricEntries.filter(([key]) => !commonKeys.has(key));
-            return (
-              <div key={moduleKey} className="revenue-section-card industry-module-card">
-                <div className="industry-group-header">
-                  <div>
-                    <h4>{INDUSTRY_MODULE_LABELS[moduleKey] || moduleKey}</h4>
-                    <div className="subtle">{modulePayload.source?.join("、") || "公开数据源"}</div>
-                  </div>
-                  <div className="industry-status-chip">{modulePayload.status}</div>
+      {extractedMetrics.length ? (
+        <SectionShell
+          title="年报提取指标"
+          description="从公司年报文本中抽取的经营指标，作为行业数据之外的公司口径补充。"
+          meta={`${extractedMetrics.length} 条`}
+        >
+          <div className="industry-extracted-grid">
+            {extractedMetrics.slice(0, 6).map((metric) => (
+              <article key={metric.id} className="industry-extracted-card">
+                <div className="industry-monitor-eyebrow">{metric.moduleLabel}</div>
+                <h3>{metric.title}</h3>
+                <div className="industry-monitor-value">
+                  {formatNumber(metric.value, 2)}
+                  {metric.unit ? <small>{metric.unit}</small> : null}
                 </div>
+                {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+              </article>
+            ))}
+          </div>
+        </SectionShell>
+      ) : null}
 
-                {specialEntries.length ? (
-                  <div className="industry-table-grid">
-                    {specialEntries.map(([metricKey, metricValue]) => {
-                      if (isTablePreview(metricValue)) return renderTableCard(metricKey, metricValue);
-                      if (metricValue && typeof metricValue === "object" && "tables" in metricValue) return null;
-                      return (
-                        <div key={metricKey} className="industry-table-card">
-                          <div className="industry-table-title">
-                            <span>{INDUSTRY_TABLE_LABELS[metricKey] || metricKey}</span>
-                            <em>对象</em>
-                          </div>
-                          <pre className="industry-json-preview">
-                            {JSON.stringify(metricValue, null, 2).slice(0, 900)}
-                          </pre>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="subtle">该模块暂时只有通用宏观、海关或能源指标。</div>
-                )}
-
-                {modulePayload.dataGaps?.length ? (
-                  <div className="industry-gap-line">{modulePayload.dataGaps.join("；")}</div>
-                ) : null}
-              </div>
-            );
-          })}
-          {!industryData ? <div className="subtle">正在等待行业数据返回。</div> : null}
+      <SectionShell
+        title="原始数据明细"
+        description="每个指标保留最近几条原始返回值，方便核对最新值来自哪一列。"
+        meta={`${detailMetrics.length} 张表`}
+      >
+        <div className="industry-detail-table-grid">
+          {detailMetrics.map((metric) => (
+            <DetailTable key={metric.id} metric={metric} />
+          ))}
         </div>
 
         {industryData?.errors && Object.keys(industryData.errors).length ? (
@@ -458,7 +563,7 @@ export default function IndustryMonitorClient() {
             {Object.entries(industryData.errors).map(([moduleKey, message]) => (
               <div key={moduleKey} className="revenue-row">
                 <div>
-                  <div className="revenue-row-title">{INDUSTRY_MODULE_LABELS[moduleKey] || moduleKey}</div>
+                  <div className="revenue-row-title">{MODULE_LABELS[moduleKey] || moduleKey}</div>
                   <div className="revenue-row-meta">{message}</div>
                 </div>
               </div>
