@@ -92,5 +92,12 @@ def build_industry_data_payload(
         },
         "data": data,
         "errors": errors,
-        "source": ["AKShare", "巨潮资讯", "东方财富主营构成", "国家统计局/公开宏观指标", "海关进出口公开指标"],
+        "source": [
+            "AKShare",
+            "巨潮资讯",
+            "东方财富主营构成",
+            "国家统计局/公开宏观指标",
+            "海关进出口公开指标",
+            "能源价格、库存与碳市场公开指标",
+        ],
     }

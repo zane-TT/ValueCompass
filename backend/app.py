@@ -2485,6 +2485,28 @@ def build_customs_trade_indicators() -> dict:
     }
 
 
+def build_energy_cost_indicators() -> dict:
+    return {
+        "status": "partial",
+        "source": "AKShare / 能源价格、库存与碳市场公开指标",
+        "tables": {
+            "oilPriceAdjustments": safe_ak_table("energy_oil_hist", lambda: ak.energy_oil_hist(), limit=12),
+            "dailyEnergyInventory": safe_ak_table(
+                "energy_daily_inventory",
+                lambda: ak.macro_china_daily_energy(),
+                limit=12,
+            ),
+            "energyIndex": safe_ak_table("energy_index", lambda: ak.macro_china_energy_index(), limit=12),
+            "domesticCarbonMarket": safe_ak_table(
+                "energy_carbon_domestic_hubei",
+                lambda: ak.energy_carbon_domestic(symbol="湖北"),
+                limit=12,
+            ),
+        },
+        "dataGaps": ["当前为能源成本和库存代理指标，尚未接入企业所在区域电价、长协煤价、天然气合同价等公司级成本口径。"],
+    }
+
+
 def extract_report_operating_metrics(report_text: str, metric_patterns: dict[str, list[str]]) -> dict[str, list[dict]]:
     metrics: dict[str, list[dict]] = {}
     text = str(report_text or "")
@@ -2594,6 +2616,7 @@ def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, a
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
             "customsTradeIndicators": build_customs_trade_indicators(),
+            "energyCostIndicators": build_energy_cost_indicators(),
             "commodityPrices": build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
             "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
             "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
@@ -2629,6 +2652,7 @@ def build_shipping_metrics(stock: str, main_business_payload: dict, annual_repor
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
             "customsTradeIndicators": build_customs_trade_indicators(),
+            "energyCostIndicators": build_energy_cost_indicators(),
             "freightIndices": tables,
             "fuelPrices": build_commodity_prices_payload(symbols="SC,FU,LU", days="30"),
             "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
@@ -2722,6 +2746,7 @@ def build_auto_new_energy_metrics(stock: str, main_business_payload: dict, annua
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
             "customsTradeIndicators": build_customs_trade_indicators(),
+            "energyCostIndicators": build_energy_cost_indicators(),
             "cpcaTotalRetail": safe_ak_table("car_market_total_retail", lambda: ak.car_market_total_cpca(indicator="零售"), limit=12),
             "cpcaTotalWholesale": safe_ak_table("car_market_total_wholesale", lambda: ak.car_market_total_cpca(indicator="批发"), limit=12),
             "cpcaTotalExport": safe_ak_table("car_market_total_export", lambda: ak.car_market_total_cpca(indicator="出口"), limit=12),
