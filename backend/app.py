@@ -2463,6 +2463,28 @@ def build_nbs_operating_indicators() -> dict:
     }
 
 
+def build_customs_trade_indicators() -> dict:
+    return {
+        "status": "partial",
+        "source": "AKShare / 海关进出口公开指标",
+        "tables": {
+            "customsImportExportOverview": safe_ak_table(
+                "customs_import_export_overview",
+                lambda: ak.macro_china_hgjck(),
+                limit=12,
+            ),
+            "exportsYoyUsd": safe_ak_table("customs_exports_yoy_usd", lambda: ak.macro_china_exports_yoy(), limit=12),
+            "importsYoyUsd": safe_ak_table("customs_imports_yoy_usd", lambda: ak.macro_china_imports_yoy(), limit=12),
+            "tradeBalanceUsd": safe_ak_table(
+                "customs_trade_balance_usd",
+                lambda: ak.macro_china_trade_balance(),
+                limit=12,
+            ),
+        },
+        "dataGaps": ["当前为总量进出口和同比指标，尚未接入 HS 编码、目的地、商品分项或公司出口口径。"],
+    }
+
+
 def extract_report_operating_metrics(report_text: str, metric_patterns: dict[str, list[str]]) -> dict[str, list[dict]]:
     metrics: dict[str, list[dict]] = {}
     text = str(report_text or "")
@@ -2544,6 +2566,7 @@ def build_baijiu_operating_metrics(stock: str, main_business_payload: dict, annu
         "stock": stock,
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
+            "customsTradeIndicators": build_customs_trade_indicators(),
             "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
             "reportExtractedMetrics": extracted,
         },
@@ -2570,6 +2593,7 @@ def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, a
         "stock": stock,
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
+            "customsTradeIndicators": build_customs_trade_indicators(),
             "commodityPrices": build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
             "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
             "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
@@ -2604,6 +2628,7 @@ def build_shipping_metrics(stock: str, main_business_payload: dict, annual_repor
         "stock": stock,
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
+            "customsTradeIndicators": build_customs_trade_indicators(),
             "freightIndices": tables,
             "fuelPrices": build_commodity_prices_payload(symbols="SC,FU,LU", days="30"),
             "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
@@ -2633,6 +2658,7 @@ def build_financial_sector_metrics(stock: str, years: int, annual_report_payload
         "stock": stock,
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
+            "customsTradeIndicators": build_customs_trade_indicators(),
             "companyFinancialAbstract": safe_ak_table(
                 f"financial_abstract_ths_{stock}",
                 lambda: ak.stock_financial_abstract_ths(symbol=stock, indicator="按报告期"),
@@ -2668,6 +2694,7 @@ def build_game_internet_metrics(stock: str, main_business_payload: dict, annual_
         "stock": stock,
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
+            "customsTradeIndicators": build_customs_trade_indicators(),
             "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
             "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
             "movieBoxOfficeProxy": safe_ak_table("movie_boxoffice_realtime", lambda: ak.movie_boxoffice_realtime(), limit=10),
@@ -2694,6 +2721,7 @@ def build_auto_new_energy_metrics(stock: str, main_business_payload: dict, annua
         "stock": stock,
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
+            "customsTradeIndicators": build_customs_trade_indicators(),
             "cpcaTotalRetail": safe_ak_table("car_market_total_retail", lambda: ak.car_market_total_cpca(indicator="零售"), limit=12),
             "cpcaTotalWholesale": safe_ak_table("car_market_total_wholesale", lambda: ak.car_market_total_cpca(indicator="批发"), limit=12),
             "cpcaTotalExport": safe_ak_table("car_market_total_export", lambda: ak.car_market_total_cpca(indicator="出口"), limit=12),
