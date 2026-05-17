@@ -419,6 +419,47 @@ type PeerCompaniesResponse = {
   }>;
 };
 
+type IndustryTablePreview = {
+  status: "ok" | "empty" | "error" | string;
+  columns: string[];
+  rows: Array<Record<string, string | number | boolean | null>>;
+  rowCount?: number;
+  error?: string;
+};
+
+type IndustryIndicatorGroup = {
+  status: string;
+  source: string;
+  tables: Record<string, IndustryTablePreview>;
+  dataGaps?: string[];
+};
+
+type IndustryModulePayload = {
+  tool: string;
+  status: string;
+  stock: string;
+  metrics?: Record<string, unknown>;
+  source?: string[];
+  dataGaps?: string[];
+};
+
+type IndustryDataResponse = {
+  tool: string;
+  status: "ok" | "partial" | string;
+  stock: string;
+  industries: string[];
+  industryInference?: {
+    mode?: string;
+    modules?: string[];
+    input?: string | null;
+    evidence?: string[];
+  };
+  data: Record<string, IndustryModulePayload>;
+  errors: Record<string, string>;
+  source: string[];
+  fetchedAt?: string;
+};
+
 const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim();
 const API_BASE = configuredApiBase || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
 
@@ -429,6 +470,58 @@ const CHART_OPTIONS: Array<{ id: ChartId; label: string; description: string }> 
   { id: "balance", label: "资产负债结构", description: "资产和负债构成" },
   { id: "pe", label: "市盈率趋势", description: "估值所处区间" },
 ];
+
+const INDUSTRY_GROUPS: Array<{
+  key: string;
+  title: string;
+  description: string;
+  tone: string;
+}> = [
+  {
+    key: "macroOperatingIndicators",
+    title: "宏观经营",
+    description: "工业增加值、PMI、PPI、用电量和企业景气，判断行业需求温度。",
+    tone: "demand",
+  },
+  {
+    key: "customsTradeIndicators",
+    title: "海关进出口",
+    description: "出口、进口、贸易差额，辅助判断外需和进出口链条压力。",
+    tone: "trade",
+  },
+  {
+    key: "energyCostIndicators",
+    title: "能源成本",
+    description: "油价、能源库存、能源指数和碳市场，观察成本端和碳约束。",
+    tone: "cost",
+  },
+];
+
+const INDUSTRY_MODULE_LABELS: Record<string, string> = {
+  baijiu: "白酒",
+  nonferrous_chemical: "有色/化工",
+  shipping: "航运",
+  financial: "金融",
+  game_internet: "游戏/互联网",
+  auto_new_energy: "汽车新能源",
+};
+
+const INDUSTRY_TABLE_LABELS: Record<string, string> = {
+  industrialProductionYoy: "工业增加值同比",
+  industrialValueAdded: "工业增加值",
+  manufacturingPmi: "制造业 PMI",
+  ppi: "PPI",
+  electricityConsumption: "全社会用电",
+  enterpriseBoomIndex: "企业景气",
+  customsImportExportOverview: "进出口总览",
+  exportsYoyUsd: "出口同比",
+  importsYoyUsd: "进口同比",
+  tradeBalanceUsd: "贸易差额",
+  oilPriceAdjustments: "油价调整",
+  dailyEnergyInventory: "能源库存",
+  energyIndex: "能源指数",
+  domesticCarbonMarket: "碳市场",
+};
 
 const BALANCE_TERM_HELP: Record<string, BalanceHelp> = {
   "asset:现金": {
@@ -1074,6 +1167,99 @@ function renderBreakdownRows(items: RevenueBreakdownItem[]) {
   ));
 }
 
+function isIndustryIndicatorGroup(value: unknown): value is IndustryIndicatorGroup {
+  return Boolean(value && typeof value === "object" && "tables" in value && "source" in value);
+}
+
+function collectIndustryGroups(industryData?: IndustryDataResponse | null) {
+  const modules = Object.entries(industryData?.data ?? {});
+  return INDUSTRY_GROUPS.map((group) => {
+    const owner = modules.find(([, payload]) => {
+      const metrics = payload.metrics ?? {};
+      return isIndustryIndicatorGroup(metrics[group.key]);
+    });
+    const indicator = owner ? (owner[1].metrics?.[group.key] as IndustryIndicatorGroup) : null;
+    return {
+      ...group,
+      moduleKey: owner?.[0] ?? "",
+      moduleLabel: owner ? INDUSTRY_MODULE_LABELS[owner[0]] || owner[0] : "",
+      indicator,
+    };
+  });
+}
+
+function summarizeIndustryTable(table?: IndustryTablePreview) {
+  if (!table) return "未返回";
+  if (table.status === "error") return table.error || "接口异常";
+  if (table.status === "empty") return "暂无数据";
+  const rowCount = table.rowCount ?? table.rows?.length ?? 0;
+  return `${rowCount} 行`;
+}
+
+function formatIndustryCell(value: string | number | boolean | null | undefined) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "number") return Number.isFinite(value) ? formatNumber(value, Math.abs(value) >= 100 ? 0 : 2) : "-";
+  return String(value);
+}
+
+function getIndustryRowPreview(row: Record<string, string | number | boolean | null>, columns: string[]) {
+  const preferredColumns = columns.length ? columns : Object.keys(row);
+  return preferredColumns.slice(0, 3).map((column) => ({
+    column,
+    value: formatIndustryCell(row[column]),
+  }));
+}
+
+function renderIndustryGroup(group: ReturnType<typeof collectIndustryGroups>[number]) {
+  const tables = Object.entries(group.indicator?.tables ?? {});
+  return (
+    <div key={group.key} className={`revenue-section-card industry-group-card industry-group-${group.tone}`}>
+      <div className="industry-group-header">
+        <div>
+          <h4>{group.title}</h4>
+          <div className="subtle">{group.description}</div>
+        </div>
+        <div className="industry-status-chip">{group.indicator?.status || "未加载"}</div>
+      </div>
+
+      <div className="industry-source-line">
+        {group.indicator?.source || "等待行业数据接口返回"}
+        {group.moduleLabel ? ` · 来自 ${group.moduleLabel} 模块` : ""}
+      </div>
+
+      {tables.length ? (
+        <div className="industry-table-grid">
+          {tables.map(([tableKey, table]) => (
+            <div key={tableKey} className="industry-table-card">
+              <div className="industry-table-title">
+                <span>{INDUSTRY_TABLE_LABELS[tableKey] || tableKey}</span>
+                <em>{summarizeIndustryTable(table)}</em>
+              </div>
+              {table.rows?.slice(0, 2).map((row, rowIndex) => (
+                <div key={`${tableKey}-${rowIndex}`} className="industry-row-preview">
+                  {getIndustryRowPreview(row, table.columns).map((item) => (
+                    <span key={`${tableKey}-${rowIndex}-${item.column}`}>
+                      <b>{item.column}</b>
+                      {item.value}
+                    </span>
+                  ))}
+                </div>
+              ))}
+              {table.status === "error" ? <div className="industry-error-text">{table.error}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="subtle">这个数据包还没有可展示的表格。</div>
+      )}
+
+      {group.indicator?.dataGaps?.length ? (
+        <div className="industry-gap-line">{group.indicator.dataGaps.join("；")}</div>
+      ) : null}
+    </div>
+  );
+}
+
 function readQueryState(searchParams: URLSearchParams): QueryState {
   return {
     stock: searchParams.get("stock")?.trim() || "600519",
@@ -1103,6 +1289,7 @@ export default function HomePage() {
   const [profitStatus, setProfitStatus] = useState("正在加载净利润与市值数据...");
   const [cashFlowStatus, setCashFlowStatus] = useState("正在加载现金流质量数据...");
   const [revenueStructureStatus, setRevenueStructureStatus] = useState("正在加载收入结构拆解...");
+  const [industryStatus, setIndustryStatus] = useState("正在加载行业经营数据...");
   const [peerStatus, setPeerStatus] = useState("");
 
   const [aiStatus, setAiStatus] = useState("点击“生成 AI 分析”获取综合解读");
@@ -1113,6 +1300,7 @@ export default function HomePage() {
   const [profitError, setProfitError] = useState<string | null>(null);
   const [cashFlowError, setCashFlowError] = useState<string | null>(null);
   const [revenueStructureError, setRevenueStructureError] = useState<string | null>(null);
+  const [industryError, setIndustryError] = useState<string | null>(null);
   const [peerError, setPeerError] = useState<string | null>(null);
 
   const [aiError, setAiError] = useState<string | null>(null);
@@ -1124,6 +1312,7 @@ export default function HomePage() {
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [cashFlowData, setCashFlowData] = useState<CashFlowQualityResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
+  const [industryData, setIndustryData] = useState<IndustryDataResponse | null>(null);
   const [peerData, setPeerData] = useState<PeerCompaniesResponse | null>(null);
   const [profitDriverData, setProfitDriverData] = useState<ProfitDriverModelResponse | null>(null);
   const [aiData, setAiData] = useState<AiAnalysisResponse | null>(null);
@@ -1138,6 +1327,7 @@ export default function HomePage() {
   const watchMetrics = displayedPositioning?.watchMetrics ?? [];
   const autoConclusionItems = buildAutoConclusionItems(profitData, trendData, revenueStructureData, cashFlowData);
   const profitDriverModel = revenueStructureData?.profitDriverModel || profitDriverData;
+  const industryGroups = collectIndustryGroups(industryData);
 
   const balanceChartRef = useRef<HTMLDivElement | null>(null);
   const trendChartRef = useRef<HTMLDivElement | null>(null);
@@ -1781,6 +1971,28 @@ export default function HomePage() {
     }
   }
 
+  async function loadIndustryData(overrides?: Partial<QueryState>, signal?: AbortSignal) {
+    const query = getQueryState(overrides);
+    setIndustryStatus("正在加载行业经营数据...");
+    setIndustryError(null);
+
+    try {
+      const params = new URLSearchParams({ stock: query.stock, industries: "auto", years: query.years });
+      const response = await fetch(`${API_BASE}/api/industry-data?${params.toString()}`, { signal });
+      const data = await parseApiJson<IndustryDataResponse>(response, "行业经营数据接口请求失败");
+      if (!response.ok) throw new Error(data.error || "行业经营数据接口请求失败");
+
+      setIndustryData(data);
+      setIndustryStatus(data.status === "partial" ? "部分数据已加载" : "加载完成");
+    } catch (fetchError) {
+      if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
+      const message = fetchError instanceof Error ? fetchError.message : "加载失败";
+      setIndustryData(null);
+      setIndustryError(message);
+      setIndustryStatus(`加载失败：${message}`);
+    }
+  }
+
   async function loadPeerCompaniesData(overrides?: Partial<QueryState>) {
     const query = getQueryState(overrides);
     setPeerStatus("正在识别同行竞品...");
@@ -1842,6 +2054,7 @@ export default function HomePage() {
     setProfitStatus("正在加载净利润与市值数据...");
     setCashFlowStatus("正在加载现金流质量数据...");
     setRevenueStructureStatus("正在加载收入结构拆解...");
+    setIndustryStatus("正在加载行业经营数据...");
     setPeerStatus(includePeers ? "正在识别同行竞品..." : "");
     setBalanceError(null);
     setTrendError(null);
@@ -1849,8 +2062,10 @@ export default function HomePage() {
     setProfitError(null);
     setCashFlowError(null);
     setRevenueStructureError(null);
+    setIndustryError(null);
     setAiStatus("点击“生成 AI 分析”获取综合解读");
     setRevenueStructureData(null);
+    setIndustryData(null);
     setProfitDriverData(null);
     setPeerError(null);
     if (!includePeers) {
@@ -1860,6 +2075,8 @@ export default function HomePage() {
     if (shouldSyncUrl) syncUrl(query);
 
     try {
+      void loadIndustryData(query, controller.signal);
+
       const params = new URLSearchParams({
         stock: query.stock,
         years: query.years,
@@ -2249,6 +2466,60 @@ export default function HomePage() {
           </div>
           </>
         ) : null}
+        </BusinessModelSection>
+      </section>
+
+      <section aria-label="行业经营数据">
+        <BusinessModelSection
+          title="行业经营数据"
+          description="把公司自身业务放回行业环境里看：需求、外需和成本端是否顺风。"
+          meta={
+            <>
+              {industryData?.industries?.map((item) => INDUSTRY_MODULE_LABELS[item] || item).join("、") || stock}
+              {industryData?.fetchedAt ? ` · ${new Date(industryData.fetchedAt).toLocaleString()}` : ""}
+            </>
+          }
+          action={
+            <button type="button" className="query-button secondary-button" onClick={() => void loadIndustryData()}>
+              刷新行业数据
+            </button>
+          }
+        >
+          <div className="status">{industryStatus}</div>
+          {industryError ? <div className="error-box">{industryError}</div> : null}
+
+          <div className="industry-overview-grid">
+            {industryGroups.map((group) => {
+              const tables = Object.values(group.indicator?.tables ?? {});
+              const okCount = tables.filter((table) => table.status === "ok").length;
+              return (
+                <div key={group.key} className={`mini-metric-card industry-kpi-card industry-group-${group.tone}`}>
+                  <div className="mini-metric-label">{group.title}</div>
+                  <div className="mini-metric-value">{group.indicator ? `${okCount}/${tables.length}` : "-"}</div>
+                  <div className="mini-metric-sub">
+                    {group.indicator ? "可用表格" : "等待接口返回"}
+                    {group.moduleLabel ? ` · ${group.moduleLabel}` : ""}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="industry-data-grid">{industryGroups.map(renderIndustryGroup)}</div>
+
+          {industryData?.errors && Object.keys(industryData.errors).length ? (
+            <div className="revenue-section-card revenue-section-card-wide">
+              <h4>模块异常</h4>
+              {Object.entries(industryData.errors).map(([moduleKey, message]) => (
+                <div key={moduleKey} className="revenue-row">
+                  <div>
+                    <div className="revenue-row-title">{INDUSTRY_MODULE_LABELS[moduleKey] || moduleKey}</div>
+                    <div className="revenue-row-meta">{message}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </BusinessModelSection>
       </section>
 

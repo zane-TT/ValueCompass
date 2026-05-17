@@ -717,6 +717,19 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.industry-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.industry-data-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .system-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -756,6 +769,107 @@ button {
 
 .revenue-section-card-wide {
   grid-column: 1 / -1;
+}
+
+.industry-kpi-card,
+.industry-group-card {
+  border-top-width: 8px;
+}
+
+.industry-group-demand {
+  border-top-color: var(--accent);
+}
+
+.industry-group-trade {
+  border-top-color: var(--blue);
+}
+
+.industry-group-cost {
+  border-top-color: var(--warning);
+}
+
+.industry-group-header,
+.industry-table-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.industry-status-chip {
+  flex: 0 0 auto;
+  border: 2px solid var(--line);
+  background: #ccff00;
+  padding: 4px 8px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.industry-source-line,
+.industry-gap-line,
+.industry-error-text {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.industry-gap-line {
+  border-top: 2px solid rgba(18, 18, 18, 0.12);
+  padding-top: 10px;
+}
+
+.industry-error-text {
+  color: var(--danger);
+}
+
+.industry-table-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.industry-table-card {
+  border: 2px solid rgba(18, 18, 18, 0.14);
+  background: var(--paper-cool);
+  padding: 10px;
+}
+
+.industry-table-title span {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+.industry-table-title em {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.industry-row-preview {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.industry-row-preview span {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.45fr) minmax(0, 1fr);
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.industry-row-preview b {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-weight: 900;
 }
 
 .revenue-row {
@@ -1395,6 +1509,8 @@ button {
   }
 
   .auto-strip,
+  .industry-overview-grid,
+  .industry-data-grid,
   .system-grid,
   .chart-toggle-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1423,6 +1539,8 @@ button {
   .custom-chart-grid.count-5,
   .revenue-structure-grid,
   .revenue-metric-grid,
+  .industry-overview-grid,
+  .industry-data-grid,
   .driver-segment-topline,
   .driver-detail-grid,
   .market-valuation-body,
@@ -1506,8 +1624,19 @@ button {
 
   .query-console,
   .auto-strip,
+  .industry-overview-grid,
+  .industry-data-grid,
   .system-grid,
   .chart-toggle-group {
+    grid-template-columns: 1fr;
+  }
+
+  .industry-group-header,
+  .industry-table-title {
+    flex-direction: column;
+  }
+
+  .industry-row-preview span {
     grid-template-columns: 1fr;
   }
 
