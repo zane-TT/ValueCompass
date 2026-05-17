@@ -7,7 +7,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
-from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 from urllib.request import ProxyHandler, Request, build_opener
@@ -18,7 +17,7 @@ import pandas as pd
 import requests
 from fastapi import Body, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from openai import OpenAI
 
 try:
@@ -38,7 +37,6 @@ try:
     from .integrations.cninfo import get_latest_report_text_payload_v2
     from .core.config import (
         BASE_DIR,
-        FRONTEND_OUT_DIR,
         YI,
     )
     from .core.openai_settings import get_openai_settings
@@ -52,6 +50,7 @@ try:
         to_em_symbol,
         to_yi,
     )
+    from .api.frontend import register_frontend_routes
     from .api.system import build_cache_stats_payload, build_health_payload, register_system_routes
 except ImportError:
     from core.cache import (
@@ -70,7 +69,6 @@ except ImportError:
     from integrations.cninfo import get_latest_report_text_payload_v2
     from core.config import (
         BASE_DIR,
-        FRONTEND_OUT_DIR,
         YI,
     )
     from core.openai_settings import get_openai_settings
@@ -84,6 +82,7 @@ except ImportError:
         to_em_symbol,
         to_yi,
     )
+    from api.frontend import register_frontend_routes
     from api.system import build_cache_stats_payload, build_health_payload, register_system_routes
 
 try:
@@ -98,27 +97,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_frontend_file(path: str) -> Path | None:
-    frontend_root = FRONTEND_OUT_DIR.resolve()
-    requested_path = path.strip("/")
-    candidates = [
-        FRONTEND_OUT_DIR / requested_path,
-        FRONTEND_OUT_DIR / f"{requested_path}.html",
-        FRONTEND_OUT_DIR / requested_path / "index.html",
-    ]
-
-    for candidate_path in candidates:
-        candidate = candidate_path.resolve()
-        try:
-            candidate.relative_to(frontend_root)
-        except ValueError:
-            continue
-
-        if candidate.is_file():
-            return candidate
-
-    return None
 
 AI_ANALYSIS_SYSTEM_PROMPT = """
 你是一名A股财报分析助手。
@@ -5150,30 +5128,7 @@ def api_business_type_analysis(payload: dict[str, Any] | None = Body(default=Non
 
 
 register_system_routes(app)
-
-
-@app.get("/")
-@app.get("/{path:path}")
-def serve_frontend(path: str = ""):
-    if path.startswith("api/"):
-        return JSONResponse({"detail": "Not Found"}, status_code=404)
-
-    requested_file = get_frontend_file(path) if path else None
-    if requested_file is not None:
-        return FileResponse(requested_file)
-
-    index_file = FRONTEND_OUT_DIR / "index.html"
-    if index_file.is_file():
-        return FileResponse(index_file)
-
-    return JSONResponse(
-        {
-            "message": "Frontend has not been built yet. Run `npm run build` in frontend first.",
-            "healthApi": "/api/health",
-            "cacheStatsApi": "/api/cache/stats?limit=10",
-        },
-        status_code=503,
-    )
+register_frontend_routes(app)
 
 
 if __name__ == "__main__":
