@@ -55,6 +55,11 @@ type QueryState = {
   industries: string;
 };
 
+type IndustryChoice = QueryState & {
+  label: string;
+  focus: string;
+};
+
 type MetricPoint = {
   label: string;
   value: number;
@@ -90,6 +95,35 @@ type ExtractedMetric = {
   unit: string;
   sourceText: string;
 };
+
+type CommodityQuote = {
+  symbol: string;
+  name: string;
+  price: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  lastSettlePrice: number | null;
+  volume: number | null;
+  unit: string;
+};
+
+type CommoditySeries = {
+  symbol: string;
+  name: string;
+  unit: string;
+  points: MetricPoint[];
+};
+
+const INDUSTRY_CHOICES: IndustryChoice[] = [
+  { industries: "auto", stock: "600519", years: "8", label: "自动识别", focus: "按公司主营自动匹配行业变量" },
+  { industries: "baijiu", stock: "600519", years: "8", label: "白酒", focus: "批价、渠道、产销、库存" },
+  { industries: "nonferrous_chemical", stock: "601600", years: "8", label: "有色/化工", focus: "商品价格、能源成本、产销披露" },
+  { industries: "shipping", stock: "601919", years: "8", label: "航运", focus: "运价指数、燃油、吞吐量" },
+  { industries: "financial", stock: "601288", years: "8", label: "金融", focus: "利率、社融、公司金融指标" },
+  { industries: "game_internet", stock: "300052", years: "8", label: "游戏/互联网", focus: "用户、流水、版号、票房代理" },
+  { industries: "auto_new_energy", stock: "002594", years: "8", label: "汽车新能源", focus: "销量、出口、电池材料" },
+];
 
 const MODULE_LABELS: Record<string, string> = {
   baijiu: "白酒",
@@ -193,6 +227,22 @@ function toNumber(value: IndustryCell | undefined): number | null {
   if (!cleaned) return null;
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function recordNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") return toNumber(value);
+  return null;
+}
+
+function recordString(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
 }
 
 function isTablePreview(value: unknown): value is IndustryTablePreview {
@@ -322,6 +372,59 @@ function collectExtractedMetrics(industryData?: IndustryDataResponse | null) {
   return extracted;
 }
 
+function getNonferrousModule(industryData?: IndustryDataResponse | null) {
+  return industryData?.data?.nonferrous_chemical ?? null;
+}
+
+function getCommodityMetrics(modulePayload?: IndustryModulePayload | null) {
+  const commodityPrices = modulePayload?.metrics?.commodityPrices;
+  if (!isRecord(commodityPrices)) return null;
+  const metrics = commodityPrices.metrics;
+  return isRecord(metrics) ? metrics : null;
+}
+
+function collectCommodityQuotes(modulePayload?: IndustryModulePayload | null): CommodityQuote[] {
+  const metrics = getCommodityMetrics(modulePayload);
+  const rows = metrics?.realtimeFutures;
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(isRecord).map((row) => ({
+    symbol: recordString(row, "symbol"),
+    name: recordString(row, "name") || recordString(row, "contract"),
+    price: recordNumber(row, "price"),
+    open: recordNumber(row, "open"),
+    high: recordNumber(row, "high"),
+    low: recordNumber(row, "low"),
+    lastSettlePrice: recordNumber(row, "lastSettlePrice"),
+    volume: recordNumber(row, "volume"),
+    unit: recordString(row, "unit"),
+  }));
+}
+
+function collectCommoditySeries(modulePayload?: IndustryModulePayload | null): CommoditySeries[] {
+  const metrics = getCommodityMetrics(modulePayload);
+  const rows = metrics?.spotBasisSeries;
+  if (!Array.isArray(rows)) return [];
+  const grouped = new Map<string, { name: string; unit: string; points: MetricPoint[] }>();
+  rows.filter(isRecord).forEach((row) => {
+    const symbol = recordString(row, "symbol");
+    const value = recordNumber(row, "spotPrice");
+    if (!symbol || value === null) return;
+    const current = grouped.get(symbol) ?? {
+      name: recordString(row, "name") || symbol,
+      unit: recordString(row, "unit"),
+      points: [],
+    };
+    current.points.push({ label: recordString(row, "date"), value });
+    grouped.set(symbol, current);
+  });
+  return Array.from(grouped.entries()).map(([symbol, item]) => ({
+    symbol,
+    name: item.name,
+    unit: item.unit,
+    points: item.points,
+  }));
+}
+
 function Sparkline({ points }: { points: MetricPoint[] }) {
   const values = points.map((point) => point.value).filter(Number.isFinite);
   if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
@@ -345,6 +448,89 @@ function Sparkline({ points }: { points: MetricPoint[] }) {
         return <circle key={`${value}-${index}`} cx={x} cy={y} r={index === values.length - 1 ? 3 : 1.8} />;
       })}
     </svg>
+  );
+}
+
+function LineChart({ points }: { points: MetricPoint[] }) {
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const polyline = values
+    .map((value, index) => {
+      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
+      const y = 84 - ((value - min) / range) * 72;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className="industry-line-chart" viewBox="0 0 100 96" role="img" aria-label="价格趋势图">
+      <line x1="0" y1="84" x2="100" y2="84" />
+      <line x1="0" y1="48" x2="100" y2="48" />
+      <line x1="0" y1="12" x2="100" y2="12" />
+      <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CommodityQuoteCard({ quote }: { quote: CommodityQuote }) {
+  const range = quote.high !== null && quote.low !== null ? Math.max(quote.high - quote.low, 1) : 1;
+  const openPosition = quote.open !== null && quote.low !== null ? ((quote.open - quote.low) / range) * 100 : 50;
+  const pricePosition = quote.price !== null && quote.low !== null ? ((quote.price - quote.low) / range) * 100 : 50;
+  const delta = quote.price !== null && quote.lastSettlePrice !== null ? quote.price - quote.lastSettlePrice : null;
+  return (
+    <article className="commodity-quote-card">
+      <div className="industry-detail-title">
+        <span>{quote.name || quote.symbol}</span>
+        <em>{quote.symbol}</em>
+      </div>
+      <div className="industry-monitor-value">
+        {formatNumber(quote.price, Math.abs(quote.price ?? 0) >= 100 ? 0 : 2)}
+        {quote.unit ? <small>{quote.unit}</small> : null}
+      </div>
+      <div className="commodity-range">
+        <i style={{ left: `${Math.max(0, Math.min(openPosition, 100))}%` }} />
+        <b style={{ left: `${Math.max(0, Math.min(pricePosition, 100))}%` }} />
+      </div>
+      <div className="commodity-quote-meta">
+        <span>低 {formatNumber(quote.low, 0)}</span>
+        <span>高 {formatNumber(quote.high, 0)}</span>
+      </div>
+      <div className="commodity-quote-meta">
+        <span>较结算 {delta === null ? "-" : `${delta > 0 ? "+" : ""}${formatNumber(delta, 2)}`}</span>
+        <span>量 {formatNumber(quote.volume, 0)}</span>
+      </div>
+    </article>
+  );
+}
+
+function CommoditySeriesCard({ series }: { series: CommoditySeries }) {
+  const latest = series.points[series.points.length - 1];
+  const previous = series.points[series.points.length - 2];
+  const delta = latest && previous ? latest.value - previous.value : null;
+  return (
+    <article className="commodity-series-card">
+      <div className="industry-detail-title">
+        <span>{series.name}现货价</span>
+        <em>{series.symbol}</em>
+      </div>
+      <div className="industry-monitor-value-row">
+        <div>
+          <div className="industry-monitor-value">
+            {formatNumber(latest?.value, Math.abs(latest?.value ?? 0) >= 100 ? 0 : 2)}
+            {series.unit ? <small>{series.unit}</small> : null}
+          </div>
+          <div className="industry-monitor-date">{latest?.label || "-"}</div>
+        </div>
+        <div className="industry-monitor-delta">
+          <span>{delta === null ? "-" : `${delta > 0 ? "+" : ""}${formatNumber(delta, 2)}`}</span>
+          <small>{series.points.length} 个交易日</small>
+        </div>
+      </div>
+      <LineChart points={series.points} />
+    </article>
   );
 }
 
@@ -409,6 +595,7 @@ function DetailTable({ metric }: { metric: MonitorMetric }) {
 
 export default function IndustryMonitorClient() {
   const initialQuery = useRef(readQueryState());
+  const [query, setQuery] = useState<QueryState>(initialQuery.current);
   const [industryData, setIndustryData] = useState<IndustryDataResponse | null>(null);
   const [status, setStatus] = useState("正在加载行业数据");
   const [error, setError] = useState<string | null>(null);
@@ -420,10 +607,20 @@ export default function IndustryMonitorClient() {
   const extractedMetrics = useMemo(() => collectExtractedMetrics(industryData), [industryData]);
   const headlineMetrics = monitorMetrics.filter((metric) => metric.value !== null).slice(0, 9);
   const detailMetrics = monitorMetrics.slice(0, 8);
+  const nonferrousModule = useMemo(() => getNonferrousModule(industryData), [industryData]);
+  const commodityQuotes = useMemo(() => collectCommodityQuotes(nonferrousModule), [nonferrousModule]);
+  const commoditySeries = useMemo(() => collectCommoditySeries(nonferrousModule), [nonferrousModule]);
+  const energyMetrics = monitorMetrics.filter((metric) => metric.moduleKey === "nonferrous_chemical" && metric.groupTitle === GROUP_LABELS.energyCostIndicators);
+  const productionMetrics = extractedMetrics.filter((metric) => metric.moduleKey === "nonferrous_chemical");
   const activeModules = industryData?.industries ?? [];
   const moduleText = activeModules.map((item) => MODULE_LABELS[item] || item).join("、") || "自动识别";
 
-  async function loadIndustryData(refresh = false) {
+  function syncUrl(nextQuery: QueryState) {
+    const params = new URLSearchParams(nextQuery);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }
+
+  async function loadIndustryData(nextQuery = query, refresh = false) {
     abortRef.current?.abort();
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
@@ -433,12 +630,14 @@ export default function IndustryMonitorClient() {
     setIsLoading(true);
     setStatus(refresh ? "正在刷新行业数据" : "正在加载行业数据");
     setError(null);
+    setQuery(nextQuery);
+    syncUrl(nextQuery);
 
     try {
       const params = new URLSearchParams({
-        stock: initialQuery.current.stock,
-        years: initialQuery.current.years,
-        industries: initialQuery.current.industries,
+        stock: nextQuery.stock,
+        years: nextQuery.years,
+        industries: nextQuery.industries,
       });
       if (refresh) params.set("refresh", "1");
       const response = await fetch(`${API_BASE}/api/industry-data?${params.toString()}`, {
@@ -469,7 +668,7 @@ export default function IndustryMonitorClient() {
   }
 
   useEffect(() => {
-    void loadIndustryData(false);
+    void loadIndustryData(initialQuery.current, false);
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -485,7 +684,7 @@ export default function IndustryMonitorClient() {
             type="button"
             className="query-button secondary-button"
             disabled={isLoading}
-            onClick={() => void loadIndustryData(true)}
+            onClick={() => void loadIndustryData(query, true)}
           >
             刷新数据
           </button>
@@ -494,7 +693,7 @@ export default function IndustryMonitorClient() {
         <div className="industry-monitor-summary">
           <div>
             <span>监控对象</span>
-            <strong>{initialQuery.current.stock}</strong>
+            <strong>{query.stock}</strong>
           </div>
           <div>
             <span>行业模块</span>
@@ -511,6 +710,21 @@ export default function IndustryMonitorClient() {
         </div>
         {error ? <div className="error-box">{error}</div> : null}
 
+        <div className="industry-switch-grid">
+          {INDUSTRY_CHOICES.map((item) => (
+            <button
+              key={item.industries}
+              type="button"
+              className={`industry-switch-button ${query.industries === item.industries ? "active" : ""}`}
+              disabled={isLoading}
+              onClick={() => void loadIndustryData(item, false)}
+            >
+              <span>{item.label}</span>
+              <small>{item.focus}</small>
+            </button>
+          ))}
+        </div>
+
         <div className="industry-monitor-grid">
           {headlineMetrics.map((metric) => (
             <MetricCard key={metric.id} metric={metric} />
@@ -523,6 +737,65 @@ export default function IndustryMonitorClient() {
           ) : null}
         </div>
       </SectionShell>
+
+      {query.industries === "nonferrous_chemical" || nonferrousModule ? (
+        <SectionShell
+          title="有色/化工专项监控"
+          description="把商品期货、现货基差、能源成本和产销披露放到同一屏，直接看价格和经营变量。"
+          meta={`${commodityQuotes.length} 个商品报价 / ${commoditySeries.length} 条现货序列`}
+        >
+          <div className="industry-subsection-title">
+            <h3>商品期货报价</h3>
+            <span>价格、开盘、高低区间、较结算变化</span>
+          </div>
+          <div className="commodity-quote-grid">
+            {commodityQuotes.slice(0, 12).map((quote) => (
+              <CommodityQuoteCard key={quote.symbol} quote={quote} />
+            ))}
+            {!commodityQuotes.length ? <div className="subtle">暂无商品期货报价。</div> : null}
+          </div>
+
+          <div className="industry-subsection-title">
+            <h3>现货价格趋势</h3>
+            <span>来自现货/基差序列，展示最近交易日走势</span>
+          </div>
+          <div className="commodity-series-grid">
+            {commoditySeries.slice(0, 6).map((series) => (
+              <CommoditySeriesCard key={series.symbol} series={series} />
+            ))}
+            {!commoditySeries.length ? <div className="subtle">暂无现货价格序列。</div> : null}
+          </div>
+
+          <div className="industry-subsection-title">
+            <h3>能源成本走势</h3>
+            <span>油价、能源库存、能源指数、碳市场等成本变量</span>
+          </div>
+          <div className="industry-monitor-grid">
+            {energyMetrics.slice(0, 6).map((metric) => (
+              <MetricCard key={metric.id} metric={metric} />
+            ))}
+            {!energyMetrics.length ? <div className="subtle">暂无能源成本图表。</div> : null}
+          </div>
+
+          <div className="industry-subsection-title">
+            <h3>产销披露</h3>
+            <span>从年报文本抽取产量、销量、产能、单位成本或均价</span>
+          </div>
+          <div className="industry-extracted-grid">
+            {productionMetrics.slice(0, 6).map((metric) => (
+              <article key={metric.id} className="industry-extracted-card">
+                <div className="industry-monitor-eyebrow">{metric.title}</div>
+                <div className="industry-monitor-value">
+                  {formatNumber(metric.value, 2)}
+                  {metric.unit ? <small>{metric.unit}</small> : null}
+                </div>
+                {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+              </article>
+            ))}
+            {!productionMetrics.length ? <div className="subtle">暂无可抽取的产销披露。</div> : null}
+          </div>
+        </SectionShell>
+      ) : null}
 
       {extractedMetrics.length ? (
         <SectionShell

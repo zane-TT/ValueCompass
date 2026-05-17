@@ -811,7 +811,10 @@ button {
 
 .industry-monitor-grid,
 .industry-extracted-grid,
-.industry-detail-table-grid {
+.industry-detail-table-grid,
+.industry-switch-grid,
+.commodity-quote-grid,
+.commodity-series-grid {
   display: grid;
   gap: 16px;
 }
@@ -828,9 +831,87 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.industry-switch-grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.industry-switch-button {
+  min-height: 76px;
+  border: 2px solid var(--line);
+  background: #fff;
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.industry-switch-button.active {
+  background: #ccff00;
+}
+
+.industry-switch-button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.industry-switch-button span,
+.industry-switch-button small {
+  display: block;
+}
+
+.industry-switch-button span {
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.industry-switch-button small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.industry-subsection-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 10px;
+}
+
+.industry-subsection-title:first-of-type {
+  margin-top: 0;
+}
+
+.industry-subsection-title h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.industry-subsection-title span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.commodity-quote-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.commodity-series-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .industry-monitor-card,
 .industry-extracted-card,
-.industry-detail-table {
+.industry-detail-table,
+.commodity-quote-card,
+.commodity-series-card {
   min-width: 0;
   border: 2px solid var(--line);
   background: #fff;
@@ -933,6 +1014,57 @@ button {
 
 .industry-sparkline circle {
   fill: currentColor;
+}
+
+.industry-line-chart {
+  width: 100%;
+  height: 160px;
+  color: var(--blue);
+  background: linear-gradient(180deg, rgba(28, 99, 255, 0.08), rgba(28, 99, 255, 0));
+  border: 1px solid var(--soft-line);
+}
+
+.industry-line-chart line {
+  stroke: rgba(18, 18, 18, 0.12);
+  stroke-width: 1;
+}
+
+.commodity-quote-card,
+.commodity-series-card {
+  display: grid;
+  gap: 10px;
+}
+
+.commodity-range {
+  position: relative;
+  height: 14px;
+  border: 1px solid rgba(18, 18, 18, 0.14);
+  background: linear-gradient(90deg, rgba(220, 38, 38, 0.14), rgba(22, 163, 74, 0.14));
+}
+
+.commodity-range i,
+.commodity-range b {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 18px;
+  background: var(--muted);
+  transform: translateX(-50%);
+}
+
+.commodity-range b {
+  width: 8px;
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+.commodity-quote-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .industry-sparkline-empty {
@@ -1801,6 +1933,9 @@ button {
   .industry-monitor-grid,
   .industry-extracted-grid,
   .industry-detail-table-grid,
+  .industry-switch-grid,
+  .commodity-quote-grid,
+  .commodity-series-grid,
   .system-grid,
   .chart-toggle-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1837,6 +1972,9 @@ button {
   .industry-monitor-grid,
   .industry-extracted-grid,
   .industry-detail-table-grid,
+  .industry-switch-grid,
+  .commodity-quote-grid,
+  .commodity-series-grid,
   .driver-segment-topline,
   .driver-detail-grid,
   .market-valuation-body,
@@ -1928,6 +2066,9 @@ button {
   .industry-monitor-grid,
   .industry-extracted-grid,
   .industry-detail-table-grid,
+  .industry-switch-grid,
+  .commodity-quote-grid,
+  .commodity-series-grid,
   .system-grid,
   .chart-toggle-group {
     grid-template-columns: 1fr;
@@ -1935,6 +2076,7 @@ button {
 
   .industry-group-header,
   .industry-table-title,
+  .industry-subsection-title,
   .industry-monitor-card-top,
   .industry-monitor-value-row,
   .industry-monitor-foot,
@@ -1944,6 +2086,10 @@ button {
 
   .industry-monitor-delta {
     min-width: 0;
+    text-align: left;
+  }
+
+  .industry-subsection-title span {
     text-align: left;
   }
 
