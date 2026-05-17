@@ -22,7 +22,11 @@
   <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
-ValueCompass is an open-source financial statement analysis workspace for China A-share companies. It helps answer one question faster:
+![ValueCompass company analysis dashboard](docs/screenshots/company-analysis.png)
+
+ValueCompass is an open-source visual research dashboard for China A-share companies. It helps investors and builders quickly judge company quality, valuation, and profit drivers from public financial data.
+
+At its core, ValueCompass helps answer one question faster:
 
 > Is this company really making high-quality money?
 
@@ -44,9 +48,13 @@ Financial statements are rich, but slow to scan. ValueCompass turns common resea
 
 ### Company Analysis
 
+Revenue, profit, cash-flow quality, and valuation history are shown together so the first read of a company is faster.
+
 ![Company analysis dashboard](docs/screenshots/company-analysis.png)
 
 ### Market Valuation
+
+Major index PE levels are compared with historical ranges and 10Y yields to give the company view more market context.
 
 ![Market valuation dashboard](docs/screenshots/market-valuation.png)
 
@@ -72,6 +80,11 @@ Financial statements are rich, but slow to scan. ValueCompass turns common resea
 - Deployment: single FastAPI entry point serving the built frontend and `/api/*`
 
 ## Quick Start
+
+Recommended runtime:
+
+- Python 3.12+
+- Node.js 20+
 
 ### 1. Backend
 
@@ -128,13 +141,13 @@ http://127.0.0.1:5001
 Copy `backend/.env.example` to `backend/.env` and configure your OpenAI-compatible API settings:
 
 ```text
-OPENAI_BASE_URL=https://api.openai-proxy.org/v1
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-5.4-nano-2026-03-17
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=your_api_key
+OPENAI_MODEL=your_model
 OPENAI_TEMPERATURE=0.1
 ```
 
-AI analysis is optional. The financial charts and valuation dashboards can run without an API key.
+AI analysis is optional. You can use OpenAI or any OpenAI-compatible endpoint. The financial charts and valuation dashboards can run without an API key.
 
 ## API
 
@@ -155,6 +168,12 @@ POST /api/ai-analysis
 POST /api/business-type-analysis
 ```
 
+Full interactive API docs are available at:
+
+```text
+http://127.0.0.1:5001/docs
+```
+
 ## Project Structure
 
 ```text
@@ -170,6 +189,14 @@ render.yaml           Render deployment configuration
 - Data comes from public sources and may be delayed, incomplete, or inconsistent across providers.
 - `backend/cache/` is used to speed up repeated local analysis.
 - This is a learning and research project, not a trading system.
+
+## Roadmap
+
+- Add more industry-specific analysis templates.
+- Expand profit driver models for commodity, manufacturing, and consumer businesses.
+- Support exporting research snapshots.
+- Improve data-source fallback and freshness checks.
+- Add an English UI mode.
 
 ## Disclaimer
 
