@@ -4,7 +4,6 @@ import json
 import math
 import os
 import re
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
@@ -25,9 +24,7 @@ from openai import OpenAI
 try:
     from .core.cache import (
         get_ak_dataframe_cached,
-        get_cache_overview,
         get_cached_payload_or_build,
-        list_recent_cache_files,
         load_cached_payload,
         load_latest_cached_payload,
         sanitize_cache_part,
@@ -40,7 +37,6 @@ try:
     )
     from .integrations.cninfo import get_latest_report_text_payload_v2
     from .core.config import (
-        APP_STARTED_AT,
         BASE_DIR,
         FRONTEND_OUT_DIR,
         YI,
@@ -56,12 +52,11 @@ try:
         to_em_symbol,
         to_yi,
     )
+    from .api.system import build_cache_stats_payload, build_health_payload, register_system_routes
 except ImportError:
     from core.cache import (
         get_ak_dataframe_cached,
-        get_cache_overview,
         get_cached_payload_or_build,
-        list_recent_cache_files,
         load_cached_payload,
         load_latest_cached_payload,
         sanitize_cache_part,
@@ -74,7 +69,6 @@ except ImportError:
     )
     from integrations.cninfo import get_latest_report_text_payload_v2
     from core.config import (
-        APP_STARTED_AT,
         BASE_DIR,
         FRONTEND_OUT_DIR,
         YI,
@@ -90,6 +84,7 @@ except ImportError:
         to_em_symbol,
         to_yi,
     )
+    from api.system import build_cache_stats_payload, build_health_payload, register_system_routes
 
 try:
     from .industry.service import IndustryDataDeps, build_industry_data_payload as build_industry_data_payload_from_service
@@ -3782,44 +3777,6 @@ def get_market_index_valuation_payload_with_cache(index_code: str, years: int, r
         return enrich_market_index_valuation_with_interest(limited_payload, years, refresh=refresh)
 
 
-def build_health_payload() -> dict:
-    now = datetime.now(timezone.utc)
-    endpoints = {
-        "dashboardData": "/api/dashboard-data?stock=600519&years=8",
-        "balance": "/api/balance?stock=600519",
-        "revenueMarketCap": "/api/revenue-market-cap?stock=000333&years=8",
-        "revenueStructure": "/api/revenue-structure?stock=600519&years=8",
-        "profitMarketCap": "/api/profit-market-cap?stock=600519&years=8",
-        "cashFlowQuality": "/api/cash-flow-quality?stock=600519&years=8",
-        "peerCompanies": "/api/peer-companies?stock=600519&limit=6",
-        "peTrend": "/api/pe-trend?stock=600519&years=8",
-        "profitDriverModel": "/api/profit-driver-model?stock=600519",
-        "commodityPrices": "/api/commodity-prices?symbols=AL,CU,RB&days=30",
-        "industryData": "/api/industry-data?stock=600519&industries=auto&years=8",
-        "aiAnalysis": "POST /api/ai-analysis",
-        "businessTypeAnalysis": "POST /api/business-type-analysis",
-    }
-    return {
-        "status": "ok",
-        "service": "ValueCompass backend",
-        "startedAt": APP_STARTED_AT.isoformat(),
-        "now": now.isoformat(),
-        "uptimeSeconds": round((now - APP_STARTED_AT).total_seconds(), 3),
-        "pythonVersion": sys.version.split()[0],
-        "cache": get_cache_overview(),
-        "availableEndpoints": endpoints,
-    }
-
-
-def build_cache_stats_payload(limit: int = 10) -> dict:
-    recent_limit = max(1, min(int(limit), 50))
-    return {
-        "status": "ok",
-        "cache": get_cache_overview(),
-        "recentFiles": list_recent_cache_files(limit=recent_limit),
-    }
-
-
 def build_dashboard_data_payload(
     stock: str,
     period: str | None,
@@ -5192,23 +5149,7 @@ def api_business_type_analysis(payload: dict[str, Any] | None = Body(default=Non
         )
 
 
-@app.get("/api/health")
-def api_health():
-    return build_health_payload()
-
-
-@app.get("/api/cache/stats")
-def api_cache_stats(limit: str = "10"):
-    limit = limit.strip() or "10"
-    try:
-        recent_limit = max(1, min(int(limit), 50))
-    except ValueError:
-        return JSONResponse(
-            {"error": "limit must be an integer between 1 and 50."},
-            status_code=400,
-        )
-
-    return build_cache_stats_payload(limit=recent_limit)
+register_system_routes(app)
 
 
 @app.get("/")
