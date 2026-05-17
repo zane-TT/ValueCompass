@@ -56,7 +56,7 @@ type SystemStatusProps = {
 };
 
 type AppShellProps = {
-  active: "stocks" | "markets";
+  active: "stocks" | "markets" | "industry";
   children: ReactNode;
 };
 
@@ -79,11 +79,11 @@ const NAV_ITEMS = [
   },
   {
     id: "industry",
-    href: "#",
+    href: "/industry-monitor",
     label: "行业监控",
     eyebrow: "利润驱动",
     initials: "ID",
-    enabled: false,
+    enabled: true,
   },
   {
     id: "macro",
