@@ -6,8 +6,6 @@ import os
 import re
 import subprocess
 import sys
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -26,7 +24,51 @@ from fastapi import Body, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from openai import OpenAI
-from dotenv import load_dotenv
+
+try:
+    from .core.cache import (
+        get_ak_dataframe_cached,
+        get_cache_overview,
+        get_cached_payload_or_build,
+        list_recent_cache_files,
+        load_cached_payload,
+        load_latest_cached_payload,
+        sanitize_cache_part,
+        save_cached_payload,
+    )
+    from .core.config import (
+        AK_SUBPROCESS_TIMEOUT_SECONDS,
+        APP_STARTED_AT,
+        BASE_DIR,
+        DEFAULT_OPENAI_BASE_URL,
+        DEFAULT_OPENAI_MODEL,
+        DEFAULT_OPENAI_TEMPERATURE,
+        FRONTEND_OUT_DIR,
+        PROXY_ENV_KEYS,
+        YI,
+    )
+except ImportError:
+    from core.cache import (
+        get_ak_dataframe_cached,
+        get_cache_overview,
+        get_cached_payload_or_build,
+        list_recent_cache_files,
+        load_cached_payload,
+        load_latest_cached_payload,
+        sanitize_cache_part,
+        save_cached_payload,
+    )
+    from core.config import (
+        AK_SUBPROCESS_TIMEOUT_SECONDS,
+        APP_STARTED_AT,
+        BASE_DIR,
+        DEFAULT_OPENAI_BASE_URL,
+        DEFAULT_OPENAI_MODEL,
+        DEFAULT_OPENAI_TEMPERATURE,
+        FRONTEND_OUT_DIR,
+        PROXY_ENV_KEYS,
+        YI,
+    )
 
 try:
     from .industry.service import IndustryDataDeps, build_industry_data_payload as build_industry_data_payload_from_service
@@ -48,31 +90,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-YI = 100000000
-BASE_DIR = Path(__file__).resolve().parent
-CACHE_DIR = BASE_DIR / "cache"
-FRONTEND_OUT_DIR = BASE_DIR.parent / "frontend" / "out"
-load_dotenv(BASE_DIR / ".env")
-DEFAULT_OPENAI_BASE_URL = "https://api.openai-proxy.org/v1"
-DEFAULT_OPENAI_MODEL = "gpt-5.4-nano-2026-03-17"
-DEFAULT_OPENAI_TEMPERATURE = 0.1
-APP_STARTED_AT = datetime.now(timezone.utc)
-AK_DATA_CACHE_TTL_SECONDS = 300
-AK_SUBPROCESS_TIMEOUT_SECONDS = 45
-
-
-class InflightCall:
-    def __init__(self) -> None:
-        self.event = threading.Event()
-        self.result: Any = None
-        self.error: BaseException | None = None
-
-
-INFLIGHT_LOCK = threading.Lock()
-INFLIGHT_CALLS: dict[tuple[object, ...], InflightCall] = {}
-AK_DATA_CACHE: dict[tuple[object, ...], tuple[float, pd.DataFrame]] = {}
-
 
 def get_frontend_file(path: str) -> Path | None:
     frontend_root = FRONTEND_OUT_DIR.resolve()
@@ -168,15 +185,6 @@ BUSINESS_TYPE_SYSTEM_PROMPT = """
 混合型：
 如果公司有两个以上重要业务，且收入或利润占比都较大，请判断为混合型，并说明各业务占比
 """.strip()
-
-PROXY_ENV_KEYS = [
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "all_proxy",
-]
 
 BUSINESS_EXPLANATION_RULES = [
     {
@@ -599,10 +607,6 @@ DEFAULT_PEER_COMPANIES = [
 ]
 
 
-def ensure_cache_dir() -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
 @contextmanager
 def temporary_disable_proxy_env():
     original_values = {key: os.environ.get(key) for key in PROXY_ENV_KEYS}
@@ -616,128 +620,6 @@ def temporary_disable_proxy_env():
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-
-
-def sanitize_cache_part(value: object) -> str:
-    text = str(value).strip()
-    safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in text)
-    return safe or "default"
-
-
-def cache_file_path(prefix: str, *parts: object) -> Path:
-    filename = "__".join([sanitize_cache_part(prefix), *[sanitize_cache_part(part) for part in parts]])
-    return CACHE_DIR / f"{filename}.json"
-
-
-def run_singleflight(key: tuple[object, ...], builder: Callable[[], Any]) -> Any:
-    with INFLIGHT_LOCK:
-        call = INFLIGHT_CALLS.get(key)
-        if call is None:
-            call = InflightCall()
-            INFLIGHT_CALLS[key] = call
-            owner = True
-        else:
-            owner = False
-
-    if not owner:
-        print(f"[INFO] Waiting for in-flight build: {key}")
-        call.event.wait()
-        if call.error is not None:
-            raise call.error
-        return call.result
-
-    try:
-        call.result = builder()
-        return call.result
-    except BaseException as exc:
-        call.error = exc
-        raise
-    finally:
-        with INFLIGHT_LOCK:
-            INFLIGHT_CALLS.pop(key, None)
-        call.event.set()
-
-
-def load_cached_payload(prefix: str, *parts: object) -> dict | None:
-    path = cache_file_path(prefix, *parts)
-    if not path.exists():
-        return None
-
-    try:
-        with path.open("r", encoding="utf-8") as cache_file:
-            print(f"[INFO] Cache hit: {path.name}")
-            return json.load(cache_file)
-    except json.JSONDecodeError:
-        print(f"[WARN] Cache corrupted, rebuilding: {path.name}")
-        path.unlink(missing_ok=True)
-        return None
-
-
-def load_latest_cached_payload(pattern: str) -> dict | None:
-    try:
-        for path in sorted(CACHE_DIR.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True):
-            try:
-                with path.open("r", encoding="utf-8") as cache_file:
-                    print(f"[INFO] Stale cache hit: {path.name}")
-                    return json.load(cache_file)
-            except json.JSONDecodeError:
-                print(f"[WARN] Cache corrupted, ignoring: {path.name}")
-                path.unlink(missing_ok=True)
-    except Exception as exc:
-        print(f"[WARN] Latest cache lookup failed: {pattern}: {exc}")
-    return None
-
-
-def save_cached_payload(payload: dict, prefix: str, *parts: object) -> dict:
-    ensure_cache_dir()
-    path = cache_file_path(prefix, *parts)
-    tmp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as cache_file:
-        json.dump(payload, cache_file, ensure_ascii=False, indent=2)
-    tmp_path.replace(path)
-    print(f"[INFO] Cache saved: {path.name}")
-    return payload
-
-
-def get_cached_payload_or_build(
-    prefix: str,
-    *parts: object,
-    builder: Callable[[], dict],
-    refresh: bool = False,
-) -> dict:
-    if not refresh:
-        cached_payload = load_cached_payload(prefix, *parts)
-        if cached_payload is not None:
-            return cached_payload
-
-    def build_and_save() -> dict:
-        if not refresh:
-            cached_payload = load_cached_payload(prefix, *parts)
-            if cached_payload is not None:
-                return cached_payload
-        payload = builder()
-        save_cached_payload(payload, prefix, *parts)
-        return payload
-
-    return run_singleflight(("payload", prefix, *parts), build_and_save)
-
-
-def get_ak_dataframe_cached(key: tuple[object, ...], builder: Callable[[], pd.DataFrame], refresh: bool = False) -> pd.DataFrame:
-    now = time.monotonic()
-    if not refresh:
-        with INFLIGHT_LOCK:
-            cached = AK_DATA_CACHE.get(key)
-            if cached is not None:
-                cached_at, cached_df = cached
-                if now - cached_at < AK_DATA_CACHE_TTL_SECONDS:
-                    print(f"[INFO] AK data memory cache hit: {key}")
-                    return cached_df.copy()
-                AK_DATA_CACHE.pop(key, None)
-
-    df = run_singleflight(("ak-data", *key), builder)
-    with INFLIGHT_LOCK:
-        AK_DATA_CACHE[key] = (time.monotonic(), df.copy())
-    return df.copy()
 
 
 def run_python_json_subprocess(code: str, *args: str, timeout: int = AK_SUBPROCESS_TIMEOUT_SECONDS) -> Any:
@@ -778,36 +660,6 @@ print(json.dumps(df.to_dict(orient="records"), ensure_ascii=False))
 """
     records = run_python_json_subprocess(code, stock)
     return pd.DataFrame(records)
-
-
-def get_cache_overview() -> dict:
-    cache_files = sorted(CACHE_DIR.glob("*.json"))
-    total_bytes = sum(path.stat().st_size for path in cache_files)
-    return {
-        "directory": str(CACHE_DIR),
-        "exists": CACHE_DIR.exists(),
-        "fileCount": len(cache_files),
-        "totalBytes": total_bytes,
-    }
-
-
-def list_recent_cache_files(limit: int = 10) -> list[dict]:
-    cache_files = sorted(
-        CACHE_DIR.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    recent_files = []
-    for path in cache_files[:limit]:
-        stat = path.stat()
-        recent_files.append(
-            {
-                "name": path.name,
-                "sizeBytes": stat.st_size,
-                "modifiedAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-            }
-        )
-    return recent_files
 
 
 def parse_ak_value(value: object) -> float:
