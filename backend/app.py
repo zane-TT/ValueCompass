@@ -2252,10 +2252,34 @@ def build_energy_cost_indicators() -> dict:
 
         return pd.DataFrame(rows)
 
+    def fetch_energy_futures_inventory() -> pd.DataFrame:
+        frames = []
+        for symbol in ["低硫燃料油", "液化石油气", "沥青", "燃油"]:
+            try:
+                df = ak.futures_inventory_em(symbol=symbol)
+                df, stale_error = prepare_industry_table(df, max_age_days=10)
+                if stale_error or df is None or df.empty:
+                    print(f"[WARN] Energy futures inventory stale or empty, symbol={symbol}: {stale_error or 'empty'}")
+                    continue
+                df = df.copy()
+                df.insert(0, "品种", symbol)
+                frames.append(df)
+            except Exception as exc:
+                print(f"[WARN] Energy futures inventory unavailable, symbol={symbol}: {exc}")
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
     return {
         "status": "partial",
-        "source": "AKShare / 外盘原油与碳排放期货行情",
+        "source": "AKShare / 能源价格、库存、指数与外盘碳排放行情",
         "tables": build_industry_table_group({
+            "oilPriceAdjustments": lambda: safe_ak_table("energy_oil_hist_v2", lambda: ak.energy_oil_hist(), limit=12),
+            "dailyEnergyInventory": lambda: safe_ak_table(
+                "energy_futures_inventory_v1",
+                fetch_energy_futures_inventory,
+                limit=12,
+                max_age_days=45,
+            ),
+            "energyIndex": lambda: safe_ak_table("energy_index_v2", lambda: ak.macro_china_energy_index(), limit=12),
             "wtiCrudeOil": lambda: safe_ak_table(
                 "foreign_future_wti_crude_v2",
                 lambda: fetch_foreign_future_series("CL", "WTI 原油", "美元/桶"),
@@ -2274,8 +2298,8 @@ def build_energy_cost_indicators() -> dict:
                 limit=45,
                 max_age_days=7,
             ),
-        }, max_workers=3),
-        "dataGaps": ["当前展示 WTI、布伦特和 EUA 碳排放期货行情；国内碳市场分交易所数据源稳定性较差，暂不放入默认监控。"],
+        }, max_workers=6),
+        "dataGaps": ["当前保留成品油调价、能源库存、能源指数，并新增 WTI、布伦特和 EUA 碳排放期货行情；国内碳市场分交易所数据源稳定性较差，暂不放入默认监控。"],
     }
 
 
@@ -5138,7 +5162,7 @@ def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str
     try:
         normalized_years = normalize_years(years, default=8)
         return get_cached_payload_or_build(
-            "industry_data_v5",
+            "industry_data_v6",
             industries or "all",
             normalized_years,
             industry_cache_day(),
