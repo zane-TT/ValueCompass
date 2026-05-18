@@ -2421,9 +2421,8 @@ def build_auto_new_energy_metrics(stock: str, main_business_payload: dict, annua
     }
 
 
-def build_industry_data_payload(stock: str, industries: str | None = None, years: str | None = "8") -> dict:
+def build_industry_data_payload(industries: str | None = None, years: str | None = "8") -> dict:
     payload = build_industry_data_payload_from_service(
-        stock=stock,
         industries=industries,
         years=years,
         deps=IndustryDataDeps(
@@ -5040,16 +5039,14 @@ def api_commodity_prices(symbols: str = "all", days: str = "30"):
 
 
 @app.get("/api/industry-data")
-def api_industry_data(stock: str = "600519", industries: str = "auto", years: str = "8", refresh: str = ""):
+def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str = ""):
     try:
-        normalized_stock = normalize_stock_code(stock.strip() or "600519")
         normalized_years = normalize_years(years, default=8)
         return get_cached_payload_or_build(
             "industry_data_v1",
-            normalized_stock,
             industries or "all",
             normalized_years,
-            builder=lambda: build_industry_data_payload(stock=normalized_stock, industries=industries, years=str(normalized_years)),
+            builder=lambda: build_industry_data_payload(industries=industries, years=str(normalized_years)),
             refresh=refresh == "1",
         )
     except Exception as exc:
@@ -5057,7 +5054,6 @@ def api_industry_data(stock: str = "600519", industries: str = "auto", years: st
         return JSONResponse(
             {
                 "error": str(exc),
-                "stock": stock,
                 "industries": industries,
                 "years": years,
             },

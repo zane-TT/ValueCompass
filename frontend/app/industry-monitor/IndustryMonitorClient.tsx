@@ -35,8 +35,8 @@ type IndustryModulePayload = {
 type IndustryDataResponse = {
   tool: string;
   status: "ok" | "partial" | string;
-  stock: string;
   industries: string[];
+  sampleStocks?: Record<string, string>;
   industryInference?: {
     mode?: string;
     modules?: string[];
@@ -50,7 +50,6 @@ type IndustryDataResponse = {
 };
 
 type QueryState = {
-  stock: string;
   years: string;
   industries: string;
 };
@@ -116,12 +115,12 @@ type CommoditySeries = {
 };
 
 const INDUSTRY_CHOICES: IndustryChoice[] = [
-  { industries: "baijiu", stock: "600519", years: "8", label: "白酒", focus: "批价、渠道、产销、库存" },
-  { industries: "nonferrous_chemical", stock: "601600", years: "8", label: "有色/化工", focus: "商品价格、能源成本、产销披露" },
-  { industries: "shipping", stock: "601919", years: "8", label: "航运", focus: "运价指数、燃油、吞吐量" },
-  { industries: "financial", stock: "601288", years: "8", label: "金融", focus: "利率、社融、公司金融指标" },
-  { industries: "game_internet", stock: "300052", years: "8", label: "游戏/互联网", focus: "用户、流水、版号、票房代理" },
-  { industries: "auto_new_energy", stock: "002594", years: "8", label: "汽车新能源", focus: "销量、出口、电池材料" },
+  { industries: "baijiu", years: "8", label: "白酒", focus: "批价、渠道、产销、库存" },
+  { industries: "nonferrous_chemical", years: "8", label: "有色/化工", focus: "商品价格、能源成本、产销披露" },
+  { industries: "shipping", years: "8", label: "航运", focus: "运价指数、燃油、吞吐量" },
+  { industries: "financial", years: "8", label: "金融", focus: "利率、社融、公司金融指标" },
+  { industries: "game_internet", years: "8", label: "游戏/互联网", focus: "用户、流水、版号、票房代理" },
+  { industries: "auto_new_energy", years: "8", label: "汽车新能源", focus: "销量、出口、电池材料" },
 ];
 
 const MODULE_LABELS: Record<string, string> = {
@@ -199,12 +198,11 @@ const VALUE_PRIORITY = [
 ];
 
 function readQueryState(): QueryState {
-  if (typeof window === "undefined") return { stock: "600519", years: "8", industries: "baijiu" };
+  if (typeof window === "undefined") return { years: "8", industries: "baijiu" };
   const params = new URLSearchParams(window.location.search);
   const industries = params.get("industries")?.trim() || "baijiu";
   const matchedChoice = INDUSTRY_CHOICES.find((item) => item.industries === industries);
   return {
-    stock: params.get("stock")?.trim() || matchedChoice?.stock || "600519",
     years: params.get("years")?.trim() || matchedChoice?.years || "8",
     industries: matchedChoice?.industries || "baijiu",
   };
@@ -927,7 +925,6 @@ export default function IndustryMonitorClient() {
 
     try {
       const params = new URLSearchParams({
-        stock: nextQuery.stock,
         years: nextQuery.years,
         industries: nextQuery.industries,
       });

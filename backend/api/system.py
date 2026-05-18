@@ -27,7 +27,7 @@ def build_health_payload() -> dict:
         "peTrend": "/api/pe-trend?stock=600519&years=8",
         "profitDriverModel": "/api/profit-driver-model?stock=600519",
         "commodityPrices": "/api/commodity-prices?symbols=AL,CU,RB&days=30",
-        "industryData": "/api/industry-data?stock=600519&industries=auto&years=8",
+        "industryData": "/api/industry-data?industries=baijiu&years=8",
         "aiAnalysis": "POST /api/ai-analysis",
         "businessTypeAnalysis": "POST /api/business-type-analysis",
     }
