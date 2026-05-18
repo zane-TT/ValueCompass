@@ -2250,10 +2250,8 @@ def build_baijiu_operating_metrics(stock: str, main_business_payload: dict, annu
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
             "customsTradeIndicators": build_customs_trade_indicators(),
-            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
-            "reportExtractedMetrics": extracted,
         },
-        "source": ["巨潮年报文本", "东方财富主营构成/AKShare"],
+        "source": ["AKShare 宏观经营指标", "海关公开指标"],
         "dataGaps": data_gaps,
     }
 
@@ -2279,10 +2277,8 @@ def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, a
             "customsTradeIndicators": build_customs_trade_indicators(),
             "energyCostIndicators": build_energy_cost_indicators(),
             "commodityPrices": build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
-            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
-            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
         },
-        "source": ["AKShare 商品期货/现货基差", "巨潮年报文本", "东方财富主营构成/AKShare"],
+        "source": ["AKShare 商品期货/现货基差", "AKShare 能源成本", "海关公开指标"],
         "dataGaps": ["电力成本、阳极、石油焦、煤沥青等专用成本项尚未逐项接入；产品-原料价差序列还未按具体行业模型封装。"],
     }
 
@@ -2316,10 +2312,8 @@ def build_shipping_metrics(stock: str, main_business_payload: dict, annual_repor
             "energyCostIndicators": build_energy_cost_indicators(),
             "freightIndices": tables,
             "fuelPrices": build_commodity_prices_payload(symbols="SC,FU,LU", days="30"),
-            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
-            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
         },
-        "source": ["AKShare 航运宏观指数", "AKShare 商品价格", "巨潮年报文本"],
+        "source": ["AKShare 航运宏观指数", "AKShare 商品价格"],
         "dataGaps": ["未接入 SCFI/CCFI 官方逐航线明细、长协运价、船队运力和港口 AIS 拥堵数据。"],
     }
 
@@ -2344,19 +2338,13 @@ def build_financial_sector_metrics(stock: str, years: int, annual_report_payload
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
             "customsTradeIndicators": build_customs_trade_indicators(),
-            "companyFinancialAbstract": safe_ak_table(
-                f"financial_abstract_ths_{stock}",
-                lambda: ak.stock_financial_abstract_ths(symbol=stock, indicator="按报告期"),
-                limit=8,
-            ),
-            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
             "lpr": safe_ak_table("macro_china_lpr", lambda: ak.macro_china_lpr(), limit=12),
             "moneySupply": safe_ak_table("macro_china_money_supply", lambda: ak.macro_china_money_supply(), limit=12),
             "newCredit": safe_ak_table("macro_china_new_financial_credit", lambda: ak.macro_china_new_financial_credit(), limit=12),
             "insuranceIncome": safe_ak_table("macro_china_insurance_income", lambda: ak.macro_china_insurance_income(), limit=12),
         },
-        "source": ["AKShare 公司财务指标", "AKShare 宏观利率/保险数据"],
-        "dataGaps": ["净息差、不良率、拨备覆盖率、AUM、佣金率、承保利润等已尝试从年报文本抽取，但尚未接入商业数据库级别的公司维度标准序列。"],
+        "source": ["AKShare 宏观利率/保险数据", "AKShare 货币供应/社融/保险数据"],
+        "dataGaps": ["净息差、不良率、拨备覆盖率、AUM、佣金率等公司维度指标需要稳定行业数据源。"],
     }
 
 
@@ -2380,11 +2368,9 @@ def build_game_internet_metrics(stock: str, main_business_payload: dict, annual_
         "metrics": {
             "macroOperatingIndicators": build_nbs_operating_indicators(),
             "customsTradeIndicators": build_customs_trade_indicators(),
-            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
-            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
             "movieBoxOfficeProxy": safe_ak_table("movie_boxoffice_realtime", lambda: ak.movie_boxoffice_realtime(), limit=10),
         },
-        "source": ["巨潮年报文本", "东方财富主营构成/AKShare", "AKShare 电影票房代理数据"],
+        "source": ["AKShare 电影票房代理数据", "AKShare 宏观经营指标"],
         "dataGaps": ["游戏 DAU/MAU、ARPU、买量成本、流水和版号生命周期缺少稳定免费标准源，当前主要依赖公司披露文本。"],
     }
 
@@ -2413,10 +2399,8 @@ def build_auto_new_energy_metrics(stock: str, main_business_payload: dict, annua
             "cpcaTotalExport": safe_ak_table("car_market_total_export", lambda: ak.car_market_total_cpca(indicator="出口"), limit=12),
             "cpcaNewEnergy": safe_ak_table("car_market_fuel_new_energy", lambda: ak.car_market_fuel_cpca(symbol="整体市场"), limit=12),
             "batteryMaterials": build_commodity_prices_payload(symbols="LC,NI,CU,AL,SI", days="30"),
-            "mainBusinessItems": summarize_business_items_for_operating_metrics(main_business_payload),
-            "reportExtractedMetrics": extract_report_operating_metrics(report_text, metric_patterns),
         },
-        "source": ["AKShare 乘联会/盖世汽车", "AKShare 商品价格", "巨潮年报文本"],
+        "source": ["AKShare 乘联会/盖世汽车", "AKShare 商品价格"],
         "dataGaps": ["车型结构、单车收入、单车毛利和出口分车型数据尚未按公司维度标准化。"],
     }
 
@@ -2426,11 +2410,7 @@ def build_industry_data_payload(industries: str | None = None, years: str | None
         industries=industries,
         years=years,
         deps=IndustryDataDeps(
-            normalize_stock_code=normalize_stock_code,
             normalize_years=normalize_years,
-            get_main_business_payload=get_main_business_payload_with_cache,
-            get_company_profile_payload=get_company_profile_payload_with_cache,
-            get_latest_report_text_payload=get_latest_report_text_payload_v2,
             build_baijiu_operating_metrics=build_baijiu_operating_metrics,
             build_nonferrous_chemical_metrics=build_nonferrous_chemical_metrics,
             build_shipping_metrics=build_shipping_metrics,

@@ -36,7 +36,6 @@ type IndustryDataResponse = {
   tool: string;
   status: "ok" | "partial" | string;
   industries: string[];
-  sampleStocks?: Record<string, string>;
   industryInference?: {
     mode?: string;
     modules?: string[];
@@ -83,16 +82,6 @@ type MonitorMetric = {
   rows: IndustryTablePreview["rows"];
   columns: string[];
   error?: string;
-};
-
-type ExtractedMetric = {
-  id: string;
-  moduleKey: string;
-  moduleLabel: string;
-  title: string;
-  value: number | null;
-  unit: string;
-  sourceText: string;
 };
 
 type CommodityQuote = {
@@ -167,7 +156,6 @@ const TABLE_LABELS: Record<string, string> = {
   cpcaTotalExport: "乘用车出口",
   cpcaNewEnergy: "新能源渗透",
   batteryMaterials: "电池材料",
-  companyFinancialAbstract: "公司金融指标",
   lpr: "LPR",
   moneySupply: "货币供应",
   newCredit: "新增信贷",
@@ -360,32 +348,6 @@ function collectMonitorMetrics(industryData?: IndustryDataResponse | null) {
     });
   });
   return metrics;
-}
-
-function collectExtractedMetrics(industryData?: IndustryDataResponse | null) {
-  const extracted: ExtractedMetric[] = [];
-  Object.entries(industryData?.data ?? {}).forEach(([moduleKey, modulePayload]) => {
-    const moduleLabel = MODULE_LABELS[moduleKey] || moduleKey;
-    const reportMetrics = modulePayload.metrics?.reportExtractedMetrics;
-    if (!reportMetrics || typeof reportMetrics !== "object") return;
-    Object.entries(reportMetrics as Record<string, unknown>).forEach(([metricKey, value]) => {
-      if (!Array.isArray(value)) return;
-      value.slice(0, 3).forEach((item, index) => {
-        if (!item || typeof item !== "object") return;
-        const record = item as Record<string, unknown>;
-        extracted.push({
-          id: `${moduleKey}-${metricKey}-${index}`,
-          moduleKey,
-          moduleLabel,
-          title: TABLE_LABELS[metricKey] || metricKey,
-          value: typeof record.value === "number" ? record.value : null,
-          unit: typeof record.unit === "string" ? record.unit : "",
-          sourceText: typeof record.sourceText === "string" ? record.sourceText : "",
-        });
-      });
-    });
-  });
-  return extracted;
 }
 
 function getNonferrousModule(industryData?: IndustryDataResponse | null) {
@@ -644,12 +606,10 @@ function IndustrySpecificPanel({
   query,
   modulePayload,
   metrics,
-  extractedMetrics,
 }: {
   query: QueryState;
   modulePayload: IndustryModulePayload | null;
   metrics: MonitorMetric[];
-  extractedMetrics: ExtractedMetric[];
 }) {
   const title = MODULE_LABELS[query.industries] || "行业专项";
   const specialMetrics = metrics.filter((metric) => isSpecialMetric(query.industries, metric));
@@ -659,7 +619,6 @@ function IndustrySpecificPanel({
   const fuelSeries = collectCommoditySeries(modulePayload, "fuelPrices");
   const batteryQuotes = collectCommodityQuotes(modulePayload, "batteryMaterials");
   const batterySeries = collectCommoditySeries(modulePayload, "batteryMaterials");
-  const productionMetrics = extractedMetrics.filter((metric) => metric.moduleKey === query.industries);
 
   if (query.industries === "nonferrous_chemical") {
     const energyMetrics = metrics.filter((metric) => metric.groupTitle === GROUP_LABELS.energyCostIndicators);
@@ -701,24 +660,6 @@ function IndustrySpecificPanel({
           ))}
           {!energyMetrics.length ? <div className="subtle">暂无能源成本图表。</div> : null}
         </div>
-
-        <div className="industry-subsection-title">
-          <h3>产销披露</h3>
-          <span>从年报文本抽取产量、销量、产能、单位成本或均价</span>
-        </div>
-        <div className="industry-extracted-grid">
-          {productionMetrics.slice(0, 6).map((metric) => (
-            <article key={metric.id} className="industry-extracted-card">
-              <div className="industry-monitor-eyebrow">{metric.title}</div>
-              <div className="industry-monitor-value">
-                {formatNumber(metric.value, 2)}
-                {metric.unit ? <small>{metric.unit}</small> : null}
-              </div>
-              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-            </article>
-          ))}
-          {!productionMetrics.length ? <div className="subtle">暂无可抽取的产销披露。</div> : null}
-        </div>
       </SectionShell>
     );
   }
@@ -726,7 +667,7 @@ function IndustrySpecificPanel({
   if (query.industries === "shipping") {
     const freightMetrics = metrics.filter(isFreightMetric);
     return (
-      <SectionShell title="航运专项监控" description="直接展示运价指数、燃油价格和年报里的箱量/吞吐量披露。" meta={`${freightMetrics.length} 个运价指标`}>
+      <SectionShell title="航运专项监控" description="直接展示运价指数和燃油价格。" meta={`${freightMetrics.length} 个运价指标`}>
         <div className="industry-subsection-title">
           <h3>运价指数</h3>
           <span>BDI、BCI、BPI、油轮指数和中国运价指数</span>
@@ -753,24 +694,6 @@ function IndustrySpecificPanel({
             <CommoditySeriesCard key={series.symbol} series={series} />
           ))}
         </div>
-
-        <div className="industry-subsection-title">
-          <h3>箱量/吞吐披露</h3>
-          <span>从年报文本抽取 TEU、吞吐量、货运量等指标</span>
-        </div>
-        <div className="industry-extracted-grid">
-          {productionMetrics.slice(0, 6).map((metric) => (
-            <article key={metric.id} className="industry-extracted-card">
-              <div className="industry-monitor-eyebrow">{metric.title}</div>
-              <div className="industry-monitor-value">
-                {formatNumber(metric.value, 2)}
-                {metric.unit ? <small>{metric.unit}</small> : null}
-              </div>
-              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-            </article>
-          ))}
-          {!productionMetrics.length ? <div className="subtle">暂无可抽取的箱量/吞吐披露。</div> : null}
-        </div>
       </SectionShell>
     );
   }
@@ -779,29 +702,15 @@ function IndustrySpecificPanel({
     return (
       <SectionShell
         title="金融专项监控"
-        description="直接展示公司金融指标、LPR、货币供应、社融信贷、保险收入和年报抽取的金融经营披露。"
-        meta={`${specialMetrics.length + productionMetrics.length} 个金融指标`}
+        description="直接展示 LPR、货币供应、社融信贷和保险收入。"
+        meta={`${specialMetrics.length} 个金融指标`}
       >
         <div className="industry-monitor-grid">
           {specialMetrics.slice(0, 9).map((metric) => (
             <MetricCard key={metric.id} metric={metric} />
           ))}
         </div>
-        {productionMetrics.length ? (
-          <div className="industry-extracted-grid">
-            {productionMetrics.slice(0, 6).map((metric) => (
-              <article key={metric.id} className="industry-extracted-card">
-                <div className="industry-monitor-eyebrow">{metric.title}</div>
-                <div className="industry-monitor-value">
-                  {formatNumber(metric.value, 2)}
-                  {metric.unit ? <small>{metric.unit}</small> : null}
-                </div>
-                {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-              </article>
-            ))}
-          </div>
-        ) : null}
-        {!specialMetrics.length && !productionMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
+        {!specialMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
       </SectionShell>
     );
   }
@@ -837,49 +746,18 @@ function IndustrySpecificPanel({
           ))}
         </div>
 
-        <div className="industry-subsection-title">
-          <h3>销量/单车经济披露</h3>
-          <span>从年报文本抽取销量、交付量、出口量、单车收入和单车毛利等指标</span>
-        </div>
-        <div className="industry-extracted-grid">
-          {productionMetrics.slice(0, 6).map((metric) => (
-            <article key={metric.id} className="industry-extracted-card">
-              <div className="industry-monitor-eyebrow">{metric.title}</div>
-              <div className="industry-monitor-value">
-                {formatNumber(metric.value, 2)}
-                {metric.unit ? <small>{metric.unit}</small> : null}
-              </div>
-              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-            </article>
-          ))}
-          {!productionMetrics.length ? <div className="subtle">暂无销量或单车经济披露。</div> : null}
-        </div>
       </SectionShell>
     );
   }
 
   return (
-    <SectionShell title={`${title}专项监控`} description="展示当前行业模块自己的经营披露和专项指标，避免只看通用宏观数据。" meta={`${specialMetrics.length + productionMetrics.length} 个专项项`}>
+    <SectionShell title={`${title}专项监控`} description="展示当前行业模块自己的固定专项指标，避免只看通用宏观数据。" meta={`${specialMetrics.length} 个专项项`}>
       <div className="industry-monitor-grid">
         {specialMetrics.slice(0, 9).map((metric) => (
           <MetricCard key={metric.id} metric={metric} />
         ))}
       </div>
-      {productionMetrics.length ? (
-        <div className="industry-extracted-grid">
-          {productionMetrics.slice(0, 6).map((metric) => (
-            <article key={metric.id} className="industry-extracted-card">
-              <div className="industry-monitor-eyebrow">{metric.title}</div>
-              <div className="industry-monitor-value">
-                {formatNumber(metric.value, 2)}
-                {metric.unit ? <small>{metric.unit}</small> : null}
-              </div>
-              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-            </article>
-          ))}
-        </div>
-      ) : null}
-      {!specialMetrics.length && !productionMetrics.length ? <div className="subtle">暂无专项数据。</div> : null}
+      {!specialMetrics.length ? <div className="subtle">暂无专项数据。</div> : null}
     </SectionShell>
   );
 }
@@ -895,7 +773,6 @@ export default function IndustryMonitorClient() {
   const requestIdRef = useRef(0);
 
   const monitorMetrics = useMemo(() => collectMonitorMetrics(industryData), [industryData]);
-  const extractedMetrics = useMemo(() => collectExtractedMetrics(industryData), [industryData]);
   const activeModules = industryData?.industries ?? [];
   const selectedModuleKey = query.industries;
   const selectedMonitorMetrics = monitorMetrics.filter((metric) => metric.moduleKey === selectedModuleKey);
@@ -1023,30 +900,8 @@ export default function IndustryMonitorClient() {
         query={{ ...query, industries: selectedModuleKey }}
         modulePayload={industryData?.data?.[selectedModuleKey] ?? getNonferrousModule(industryData)}
         metrics={selectedMonitorMetrics}
-        extractedMetrics={extractedMetrics}
       />
 
-      {extractedMetrics.length ? (
-        <SectionShell
-          title="年报提取指标"
-          description="从公司年报文本中抽取的经营指标，作为行业数据之外的公司口径补充。"
-          meta={`${extractedMetrics.length} 条`}
-        >
-          <div className="industry-extracted-grid">
-            {extractedMetrics.slice(0, 6).map((metric) => (
-              <article key={metric.id} className="industry-extracted-card">
-                <div className="industry-monitor-eyebrow">{metric.moduleLabel}</div>
-                <h3>{metric.title}</h3>
-                <div className="industry-monitor-value">
-                  {formatNumber(metric.value, 2)}
-                  {metric.unit ? <small>{metric.unit}</small> : null}
-                </div>
-                {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-              </article>
-            ))}
-          </div>
-        </SectionShell>
-      ) : null}
 
       <SectionShell
         title="原始数据明细"
