@@ -1016,6 +1016,57 @@ button {
   fill: currentColor;
 }
 
+.trend-range-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.trend-range-summary > div,
+.commodity-range-summary {
+  min-width: 0;
+  border: 1px solid var(--soft-line);
+  background: rgba(255, 255, 255, 0.76);
+  padding: 8px;
+}
+
+.trend-range-summary span,
+.commodity-range-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.trend-range-summary strong,
+.commodity-range-summary strong {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.trend-range-summary i,
+.commodity-range-summary i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.trend-range-summary small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .industry-line-chart {
   width: 100%;
   height: 160px;
@@ -1934,6 +1985,7 @@ button {
   .industry-extracted-grid,
   .industry-detail-table-grid,
   .industry-switch-grid,
+  .trend-range-summary,
   .commodity-quote-grid,
   .commodity-series-grid,
   .system-grid,

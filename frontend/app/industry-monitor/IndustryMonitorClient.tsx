@@ -201,6 +201,27 @@ function formatNumber(value?: number | null, digits = 2) {
   return value.toLocaleString("zh-CN", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function valueDigits(value?: number | null) {
+  return Math.abs(value ?? 0) >= 100 ? 0 : 2;
+}
+
+function formatValueWithUnit(value?: number | null, unit = "") {
+  const formatted = formatNumber(value, valueDigits(value));
+  return unit ? `${formatted}${unit}` : formatted;
+}
+
+function summarizePoints(points: MetricPoint[]) {
+  const valid = points.filter((point) => Number.isFinite(point.value));
+  if (!valid.length) return null;
+  const first = valid[0];
+  const latest = valid[valid.length - 1];
+  const min = valid.reduce((best, point) => (point.value < best.value ? point : best), valid[0]);
+  const max = valid.reduce((best, point) => (point.value > best.value ? point : best), valid[0]);
+  const delta = latest.value - first.value;
+  const deltaPct = first.value === 0 ? null : (delta / Math.abs(first.value)) * 100;
+  return { first, latest, min, max, delta, deltaPct, count: valid.length };
+}
+
 function formatCell(value: IndustryCell | undefined) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") return Number.isFinite(value) ? formatNumber(value, Math.abs(value) >= 100 ? 0 : 2) : "-";
@@ -484,11 +505,48 @@ function LineChart({ points }: { points: MetricPoint[] }) {
   );
 }
 
+function TrendRangeSummary({ points, unit = "" }: { points: MetricPoint[]; unit?: string }) {
+  const summary = summarizePoints(points);
+  if (!summary) return null;
+  return (
+    <div className="trend-range-summary">
+      <div>
+        <span>区间变化</span>
+        <strong>
+          {formatValueWithUnit(summary.first.value, unit)}
+          <i>→</i>
+          {formatValueWithUnit(summary.latest.value, unit)}
+        </strong>
+        <small>
+          {summary.first.label || "起点"} 至 {summary.latest.label || "最新"}
+        </small>
+      </div>
+      <div>
+        <span>最低 / 最高</span>
+        <strong>
+          {formatValueWithUnit(summary.min.value, unit)}
+          <i>/</i>
+          {formatValueWithUnit(summary.max.value, unit)}
+        </strong>
+        <small>
+          {summary.min.label || "-"} / {summary.max.label || "-"}
+        </small>
+      </div>
+      <div>
+        <span>累计涨跌</span>
+        <strong>{`${summary.delta > 0 ? "+" : ""}${formatValueWithUnit(summary.delta, unit)}`}</strong>
+        <small>{summary.deltaPct === null ? `${summary.count} 个观测点` : `${summary.deltaPct > 0 ? "+" : ""}${formatNumber(summary.deltaPct, 2)}%`}</small>
+      </div>
+    </div>
+  );
+}
+
 function CommodityQuoteCard({ quote }: { quote: CommodityQuote }) {
   const range = quote.high !== null && quote.low !== null ? Math.max(quote.high - quote.low, 1) : 1;
   const openPosition = quote.open !== null && quote.low !== null ? ((quote.open - quote.low) / range) * 100 : 50;
   const pricePosition = quote.price !== null && quote.low !== null ? ((quote.price - quote.low) / range) * 100 : 50;
   const delta = quote.price !== null && quote.lastSettlePrice !== null ? quote.price - quote.lastSettlePrice : null;
+  const deltaPct = delta !== null && quote.lastSettlePrice ? (delta / Math.abs(quote.lastSettlePrice)) * 100 : null;
   return (
     <article className="commodity-quote-card">
       <div className="industry-detail-title">
@@ -503,13 +561,21 @@ function CommodityQuoteCard({ quote }: { quote: CommodityQuote }) {
         <i style={{ left: `${Math.max(0, Math.min(openPosition, 100))}%` }} />
         <b style={{ left: `${Math.max(0, Math.min(pricePosition, 100))}%` }} />
       </div>
-      <div className="commodity-quote-meta">
-        <span>低 {formatNumber(quote.low, 0)}</span>
-        <span>高 {formatNumber(quote.high, 0)}</span>
+      <div className="commodity-range-summary">
+        <span>日内区间</span>
+        <strong>
+          {formatValueWithUnit(quote.low, quote.unit)}
+          <i>→</i>
+          {formatValueWithUnit(quote.high, quote.unit)}
+        </strong>
       </div>
       <div className="commodity-quote-meta">
-        <span>较结算 {delta === null ? "-" : `${delta > 0 ? "+" : ""}${formatNumber(delta, 2)}`}</span>
-        <span>量 {formatNumber(quote.volume, 0)}</span>
+        <span>开盘 {formatValueWithUnit(quote.open, quote.unit)}</span>
+        <span>最新 {formatValueWithUnit(quote.price, quote.unit)}</span>
+      </div>
+      <div className="commodity-quote-meta">
+        <span>较结算 {delta === null ? "-" : `${delta > 0 ? "+" : ""}${formatValueWithUnit(delta, quote.unit)}`}</span>
+        <span>{deltaPct === null ? `量 ${formatNumber(quote.volume, 0)}` : `${deltaPct > 0 ? "+" : ""}${formatNumber(deltaPct, 2)}%`}</span>
       </div>
     </article>
   );
@@ -539,6 +605,7 @@ function CommoditySeriesCard({ series }: { series: CommoditySeries }) {
         </div>
       </div>
       <LineChart points={series.points} />
+      <TrendRangeSummary points={series.points} unit={series.unit} />
     </article>
   );
 }
@@ -571,6 +638,7 @@ function MetricCard({ metric }: { metric: MonitorMetric }) {
         </div>
       </div>
       <Sparkline points={metric.points} />
+      <TrendRangeSummary points={metric.points} unit={metric.unit} />
       <div className="industry-monitor-foot">
         <span>{metric.valueLabel}</span>
         <span>{metric.points.length} 个观测点</span>
