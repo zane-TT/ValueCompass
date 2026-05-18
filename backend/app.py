@@ -5085,7 +5085,7 @@ def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str
     try:
         normalized_years = normalize_years(years, default=8)
         return get_cached_payload_or_build(
-            "industry_data_v2",
+            "industry_data_v3",
             industries or "all",
             normalized_years,
             industry_cache_day(),
