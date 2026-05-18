@@ -447,6 +447,23 @@ function isFreightMetric(metric: MonitorMetric) {
   return metric.groupTitle === GROUP_LABELS.freightIndices || metric.groupTitle === "freightIndices";
 }
 
+function isCommonOperatingMetric(metric: MonitorMetric) {
+  return (
+    metric.groupTitle === GROUP_LABELS.macroOperatingIndicators ||
+    metric.groupTitle === "macroOperatingIndicators" ||
+    metric.groupTitle === GROUP_LABELS.customsTradeIndicators ||
+    metric.groupTitle === "customsTradeIndicators" ||
+    metric.groupTitle === GROUP_LABELS.energyCostIndicators ||
+    metric.groupTitle === "energyCostIndicators"
+  );
+}
+
+function isSpecialMetric(moduleKey: string, metric: MonitorMetric) {
+  if (moduleKey === "nonferrous_chemical") return metric.groupTitle === GROUP_LABELS.energyCostIndicators;
+  if (moduleKey === "shipping") return isFreightMetric(metric);
+  return !isCommonOperatingMetric(metric);
+}
+
 function isIndustryOverviewMetric(moduleKey: string, metric: MonitorMetric) {
   if (moduleKey === "nonferrous_chemical") {
     return metric.groupTitle === GROUP_LABELS.energyCostIndicators || !metric.groupTitle;
@@ -637,7 +654,7 @@ function IndustrySpecificPanel({
   extractedMetrics: ExtractedMetric[];
 }) {
   const title = MODULE_LABELS[query.industries] || "行业专项";
-  const nonCommonMetrics = metrics.filter((metric) => !metric.groupTitle || isFreightMetric(metric));
+  const specialMetrics = metrics.filter((metric) => isSpecialMetric(query.industries, metric));
   const commodityQuotes = collectCommodityQuotes(modulePayload);
   const commoditySeries = collectCommoditySeries(modulePayload);
   const fuelQuotes = collectCommodityQuotes(modulePayload, "fuelPrices");
@@ -762,19 +779,19 @@ function IndustrySpecificPanel({
 
   if (query.industries === "financial") {
     return (
-      <SectionShell title="金融专项监控" description="直接展示公司金融指标、LPR、货币供应、社融信贷和保险收入。" meta={`${nonCommonMetrics.length} 张金融表`}>
+      <SectionShell title="金融专项监控" description="直接展示公司金融指标、LPR、货币供应、社融信贷和保险收入。" meta={`${specialMetrics.length} 张金融表`}>
         <div className="industry-monitor-grid">
-          {nonCommonMetrics.slice(0, 9).map((metric) => (
+          {specialMetrics.slice(0, 9).map((metric) => (
             <MetricCard key={metric.id} metric={metric} />
           ))}
-          {!nonCommonMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
+          {!specialMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
         </div>
       </SectionShell>
     );
   }
 
   if (query.industries === "auto_new_energy") {
-    const autoMetrics = nonCommonMetrics.filter((metric) => !metric.id.includes("batteryMaterials"));
+    const autoMetrics = specialMetrics.filter((metric) => !metric.id.includes("batteryMaterials"));
     return (
       <SectionShell title="汽车新能源专项监控" description="直接展示乘联会销量、批发、出口、新能源渗透和电池材料价格。" meta={`${autoMetrics.length} 个汽车指标`}>
         <div className="industry-subsection-title">
@@ -808,9 +825,9 @@ function IndustrySpecificPanel({
   }
 
   return (
-    <SectionShell title={`${title}专项监控`} description="展示当前行业模块自己的经营披露和专项指标，避免只看通用宏观数据。" meta={`${nonCommonMetrics.length + productionMetrics.length} 个专项项`}>
+    <SectionShell title={`${title}专项监控`} description="展示当前行业模块自己的经营披露和专项指标，避免只看通用宏观数据。" meta={`${specialMetrics.length + productionMetrics.length} 个专项项`}>
       <div className="industry-monitor-grid">
-        {nonCommonMetrics.slice(0, 9).map((metric) => (
+        {specialMetrics.slice(0, 9).map((metric) => (
           <MetricCard key={metric.id} metric={metric} />
         ))}
       </div>
@@ -828,7 +845,7 @@ function IndustrySpecificPanel({
           ))}
         </div>
       ) : null}
-      {!nonCommonMetrics.length && !productionMetrics.length ? <div className="subtle">暂无专项数据。</div> : null}
+      {!specialMetrics.length && !productionMetrics.length ? <div className="subtle">暂无专项数据。</div> : null}
     </SectionShell>
   );
 }
