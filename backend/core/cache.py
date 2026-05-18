@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -37,6 +38,18 @@ def sanitize_cache_part(value: object) -> str:
 def cache_file_path(prefix: str, *parts: object) -> Path:
     filename = "__".join([sanitize_cache_part(prefix), *[sanitize_cache_part(part) for part in parts]])
     return CACHE_DIR / f"{filename}.json"
+
+
+def sanitize_json_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: sanitize_json_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_json_payload(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if pd.isna(value) and not isinstance(value, (str, bytes, bytearray)):
+        return None
+    return value
 
 
 def run_singleflight(key: tuple[object, ...], builder: Callable[[], Any]) -> Any:
@@ -76,7 +89,7 @@ def load_cached_payload(prefix: str, *parts: object) -> dict | None:
     try:
         with path.open("r", encoding="utf-8") as cache_file:
             print(f"[INFO] Cache hit: {path.name}")
-            return json.load(cache_file)
+            return sanitize_json_payload(json.load(cache_file))
     except json.JSONDecodeError:
         print(f"[WARN] Cache corrupted, rebuilding: {path.name}")
         path.unlink(missing_ok=True)
@@ -89,7 +102,7 @@ def load_latest_cached_payload(pattern: str) -> dict | None:
             try:
                 with path.open("r", encoding="utf-8") as cache_file:
                     print(f"[INFO] Stale cache hit: {path.name}")
-                    return json.load(cache_file)
+                    return sanitize_json_payload(json.load(cache_file))
             except json.JSONDecodeError:
                 print(f"[WARN] Cache corrupted, ignoring: {path.name}")
                 path.unlink(missing_ok=True)
@@ -102,11 +115,12 @@ def save_cached_payload(payload: dict, prefix: str, *parts: object) -> dict:
     ensure_cache_dir()
     path = cache_file_path(prefix, *parts)
     tmp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+    clean_payload = sanitize_json_payload(payload)
     with tmp_path.open("w", encoding="utf-8") as cache_file:
-        json.dump(payload, cache_file, ensure_ascii=False, indent=2)
+        json.dump(clean_payload, cache_file, ensure_ascii=False, indent=2, allow_nan=False)
     tmp_path.replace(path)
     print(f"[INFO] Cache saved: {path.name}")
-    return payload
+    return clean_payload
 
 
 def get_cached_payload_or_build(
