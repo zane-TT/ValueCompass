@@ -2405,12 +2405,10 @@ def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, a
     }
     metrics = build_industry_table_group(
         {
-            "macroOperatingIndicators": lambda: build_nbs_operating_indicators(),
-            "customsTradeIndicators": lambda: build_customs_trade_indicators(),
             "energyCostIndicators": lambda: build_energy_cost_indicators(),
             "commodityPrices": lambda: build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
         },
-        max_workers=4,
+        max_workers=2,
     )
     return {
         "tool": "nonferrous_chemical_metrics",
@@ -2423,14 +2421,17 @@ def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, a
 
 
 def build_shipping_metrics(stock: str, main_business_payload: dict, annual_report_payload: dict) -> dict:
-    tables = {
-        "bdi": safe_ak_table("shipping_bdi", lambda: ak.macro_shipping_bdi()),
-        "bci": safe_ak_table("shipping_bci", lambda: ak.macro_shipping_bci()),
-        "bpi": safe_ak_table("shipping_bpi", lambda: ak.macro_shipping_bpi()),
-        "bcti": safe_ak_table("shipping_bcti", lambda: ak.macro_shipping_bcti()),
-        "bdti": safe_ak_table("shipping_bdti", lambda: ak.macro_china_bdti_index()),
-        "chinaFreightIndex": safe_ak_table("shipping_china_freight", lambda: ak.macro_china_freight_index()),
-    }
+    tables = build_industry_table_group(
+        {
+            "bdi": lambda: safe_ak_table("shipping_bdi", lambda: ak.macro_shipping_bdi()),
+            "bci": lambda: safe_ak_table("shipping_bci", lambda: ak.macro_shipping_bci()),
+            "bpi": lambda: safe_ak_table("shipping_bpi", lambda: ak.macro_shipping_bpi()),
+            "bcti": lambda: safe_ak_table("shipping_bcti", lambda: ak.macro_shipping_bcti()),
+            "bdti": lambda: safe_ak_table("shipping_bdti", lambda: ak.macro_china_bdti_index()),
+            "chinaFreightIndex": lambda: safe_ak_table("shipping_china_freight", lambda: ak.macro_china_freight_index()),
+        },
+        max_workers=4,
+    )
     report_text = str(annual_report_payload.get("textExcerpt") or "")
     metric_patterns = {
         "teuOrThroughput": [
@@ -2446,8 +2447,6 @@ def build_shipping_metrics(stock: str, main_business_payload: dict, annual_repor
         "status": "partial",
         "stock": stock,
         "metrics": {
-            "macroOperatingIndicators": build_nbs_operating_indicators(),
-            "customsTradeIndicators": build_customs_trade_indicators(),
             "energyCostIndicators": build_energy_cost_indicators(),
             "freightIndices": tables,
             "fuelPrices": build_commodity_prices_payload(symbols="SC,FU,LU", days="30"),
@@ -5162,7 +5161,7 @@ def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str
     try:
         normalized_years = normalize_years(years, default=8)
         return get_cached_payload_or_build(
-            "industry_data_v6",
+            "industry_data_v7",
             industries or "all",
             normalized_years,
             industry_cache_day(),
