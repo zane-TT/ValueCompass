@@ -222,6 +222,10 @@ function summarizePoints(points: MetricPoint[]) {
   return { first, latest, min, max, delta, deltaPct, count: valid.length };
 }
 
+function formatAxisValue(value: number) {
+  return formatNumber(value, Math.abs(value) >= 100 ? 0 : 2);
+}
+
 function formatCell(value: IndustryCell | undefined) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") return Number.isFinite(value) ? formatNumber(value, Math.abs(value) >= 100 ? 0 : 2) : "-";
@@ -456,25 +460,40 @@ function isIndustryOverviewMetric(moduleKey: string, metric: MonitorMetric) {
 }
 
 function Sparkline({ points }: { points: MetricPoint[] }) {
-  const values = points.map((point) => point.value).filter(Number.isFinite);
+  const validPoints = points.filter((point) => Number.isFinite(point.value));
+  const values = validPoints.map((point) => point.value);
   if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
+  const left = 22;
+  const right = 98;
+  const top = 6;
+  const bottom = 30;
+  const width = right - left;
+  const height = bottom - top;
   const polyline = values
     .map((value, index) => {
-      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
-      const y = 34 - ((value - min) / range) * 28;
+      const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
+      const y = bottom - ((value - min) / range) * height;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(" ");
 
   return (
     <svg className="industry-sparkline" viewBox="0 0 100 40" role="img" aria-label="趋势图">
+      <line className="industry-chart-grid" x1={left} y1={top} x2={right} y2={top} />
+      <line className="industry-chart-grid" x1={left} y1={bottom} x2={right} y2={bottom} />
+      <line className="industry-chart-axis" x1={left} y1={top} x2={left} y2={bottom} />
+      <line className="industry-chart-axis" x1={left} y1={bottom} x2={right} y2={bottom} />
+      <text className="industry-chart-label" x="2" y={top + 3}>{formatAxisValue(max)}</text>
+      <text className="industry-chart-label" x="2" y={bottom + 3}>{formatAxisValue(min)}</text>
+      <text className="industry-chart-label industry-chart-x-label" x={left} y="38">{validPoints[0]?.label || ""}</text>
+      <text className="industry-chart-label industry-chart-x-label" x={right} y="38" textAnchor="end">{validPoints[validPoints.length - 1]?.label || ""}</text>
       <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
       {values.map((value, index) => {
-        const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
-        const y = 34 - ((value - min) / range) * 28;
+        const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
+        const y = bottom - ((value - min) / range) * height;
         return <circle key={`${value}-${index}`} cx={x} cy={y} r={index === values.length - 1 ? 3 : 1.8} />;
       })}
     </svg>
@@ -482,24 +501,40 @@ function Sparkline({ points }: { points: MetricPoint[] }) {
 }
 
 function LineChart({ points }: { points: MetricPoint[] }) {
-  const values = points.map((point) => point.value).filter(Number.isFinite);
+  const validPoints = points.filter((point) => Number.isFinite(point.value));
+  const values = validPoints.map((point) => point.value);
   if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
+  const mid = min + range / 2;
+  const left = 18;
+  const right = 98;
+  const top = 12;
+  const midY = 48;
+  const bottom = 78;
+  const width = right - left;
+  const height = bottom - top;
   const polyline = values
     .map((value, index) => {
-      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
-      const y = 84 - ((value - min) / range) * 72;
+      const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
+      const y = bottom - ((value - min) / range) * height;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(" ");
 
   return (
     <svg className="industry-line-chart" viewBox="0 0 100 96" role="img" aria-label="价格趋势图">
-      <line x1="0" y1="84" x2="100" y2="84" />
-      <line x1="0" y1="48" x2="100" y2="48" />
-      <line x1="0" y1="12" x2="100" y2="12" />
+      <line className="industry-chart-grid" x1={left} y1={top} x2={right} y2={top} />
+      <line className="industry-chart-grid" x1={left} y1={midY} x2={right} y2={midY} />
+      <line className="industry-chart-grid" x1={left} y1={bottom} x2={right} y2={bottom} />
+      <line className="industry-chart-axis" x1={left} y1={top} x2={left} y2={bottom} />
+      <line className="industry-chart-axis" x1={left} y1={bottom} x2={right} y2={bottom} />
+      <text className="industry-chart-label" x="2" y={top + 3}>{formatAxisValue(max)}</text>
+      <text className="industry-chart-label" x="2" y={midY + 3}>{formatAxisValue(mid)}</text>
+      <text className="industry-chart-label" x="2" y={bottom + 3}>{formatAxisValue(min)}</text>
+      <text className="industry-chart-label industry-chart-x-label" x={left} y="92">{validPoints[0]?.label || ""}</text>
+      <text className="industry-chart-label industry-chart-x-label" x={right} y="92" textAnchor="end">{validPoints[validPoints.length - 1]?.label || ""}</text>
       <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );

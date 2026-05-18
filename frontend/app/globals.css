@@ -1016,6 +1016,26 @@ button {
   fill: currentColor;
 }
 
+.industry-chart-axis {
+  stroke: rgba(18, 18, 18, 0.42);
+  stroke-width: 0.7;
+}
+
+.industry-chart-grid {
+  stroke: rgba(18, 18, 18, 0.12);
+  stroke-width: 0.65;
+}
+
+.industry-chart-label {
+  fill: var(--muted);
+  font-size: 4px;
+  font-weight: 900;
+}
+
+.industry-chart-x-label {
+  font-size: 3.6px;
+}
+
 .trend-range-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1078,6 +1098,18 @@ button {
 .industry-line-chart line {
   stroke: rgba(18, 18, 18, 0.12);
   stroke-width: 1;
+}
+
+.industry-line-chart .industry-chart-axis,
+.industry-sparkline .industry-chart-axis {
+  stroke: rgba(18, 18, 18, 0.42);
+  stroke-width: 0.7;
+}
+
+.industry-line-chart .industry-chart-grid,
+.industry-sparkline .industry-chart-grid {
+  stroke: rgba(18, 18, 18, 0.12);
+  stroke-width: 0.65;
 }
 
 .commodity-quote-card,
