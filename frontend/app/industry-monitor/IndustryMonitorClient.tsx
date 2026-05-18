@@ -146,7 +146,7 @@ const TABLE_LABELS: Record<string, string> = {
   exportsYoyUsd: "出口同比",
   importsYoyUsd: "进口同比",
   tradeBalanceUsd: "贸易差额",
-  oilPriceAdjustments: "油价调整",
+  oilPriceAdjustments: "成品油调价",
   dailyEnergyInventory: "能源库存",
   energyIndex: "能源指数",
   domesticCarbonMarket: "碳市场",
@@ -326,6 +326,23 @@ function buildPoints(table: IndustryTablePreview, valueColumn: string, dateColum
     .filter((point): point is MetricPoint => point.value !== null);
 }
 
+function displayValueLabel(tableKey: string, valueColumn: string) {
+  if (tableKey === "oilPriceAdjustments" && valueColumn === "汽油价格") return "汽油调后价";
+  if (tableKey === "oilPriceAdjustments" && valueColumn === "柴油价格") return "柴油调后价";
+  return valueColumn || "数值";
+}
+
+function displayDateLabel(tableKey: string, label?: string) {
+  if (!label || label === "-") return "-";
+  if (tableKey === "oilPriceAdjustments") return `调价日 ${label}`;
+  return label;
+}
+
+function displayUnit(tableKey: string, valueColumn: string, value: number | null) {
+  if (tableKey === "oilPriceAdjustments") return "元/吨";
+  return inferUnit(valueColumn, value);
+}
+
 function buildMetricFromTable(
   moduleKey: string,
   groupKey: string | null,
@@ -341,6 +358,7 @@ function buildMetricFromTable(
   const delta = latestPoint && previousPoint ? latestPoint.value - previousPoint.value : null;
   const deltaPct = latestPoint && previousPoint && previousPoint.value !== 0 ? (delta! / Math.abs(previousPoint.value)) * 100 : null;
   const moduleLabel = MODULE_LABELS[moduleKey] || moduleKey;
+  const valueLabel = displayValueLabel(tableKey, valueColumn);
   return {
     id: `${moduleKey}-${groupKey || "special"}-${tableKey}`,
     moduleKey,
@@ -349,13 +367,13 @@ function buildMetricFromTable(
     title: TABLE_LABELS[tableKey] || tableKey,
     status: table.status,
     source,
-    valueLabel: valueColumn || "数值",
+    valueLabel,
     value: latestPoint?.value ?? null,
     previousValue: previousPoint?.value ?? null,
     delta,
     deltaPct,
-    dateLabel: latestPoint?.label || "-",
-    unit: inferUnit(valueColumn, latestPoint?.value ?? null),
+    dateLabel: displayDateLabel(tableKey, latestPoint?.label),
+    unit: displayUnit(tableKey, valueColumn, latestPoint?.value ?? null),
     points,
     rows: table.rows,
     columns: table.columns,
