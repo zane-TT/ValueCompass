@@ -3769,7 +3769,7 @@ def build_dashboard_data_payload(
         "profitMarketCap": lambda: get_profit_market_cap_payload_with_cache(stock=stock, years=years, refresh=refresh),
         "cashFlowQuality": lambda: get_cash_flow_quality_payload_with_cache(stock=stock, years=years, refresh=refresh),
         "revenueStructure": lambda: get_cached_payload_or_build(
-            "revenue_structure_v7",
+            "revenue_structure_v8",
             stock,
             years,
             builder=lambda: get_revenue_structure_payload(stock=stock, years=years),
@@ -3819,12 +3819,42 @@ def is_supplementary_item(item_name: str) -> bool:
     )
 
 
+GENERIC_BUSINESS_BUCKET_NAMES = {
+    "销售",
+    "商品销售",
+    "产品销售",
+    "主营业务",
+    "主营业",
+    "合计",
+}
+
+
+def is_generic_business_bucket(item_name: object) -> bool:
+    normalized_name = re.sub(r"\s+", "", str(item_name or ""))
+    normalized_name = normalized_name.strip("：:（）()")
+    return normalized_name in GENERIC_BUSINESS_BUCKET_NAMES
+
+
+def remove_overlapping_summary_items(items: list[dict]) -> list[dict]:
+    if len(items) < 2:
+        return items
+
+    ratio_sum = sum(float(item.get("revenueRatio") or 0) for item in items)
+    has_generic_bucket = any(is_generic_business_bucket(item.get("itemName")) for item in items)
+    if ratio_sum <= 1.05 or not has_generic_bucket:
+        return items
+
+    refined_items = [item for item in items if not is_generic_business_bucket(item.get("itemName"))]
+    return refined_items or items
+
+
 def filter_business_items(items: list[dict], category_type: str) -> list[dict]:
     filtered_items = [
         sanitize_business_item(item)
         for item in items
         if item.get("categoryType") == category_type and not is_supplementary_item(item.get("itemName", ""))
     ]
+    filtered_items = remove_overlapping_summary_items(filtered_items)
     return sorted(filtered_items, key=lambda item: item.get("revenue") or 0, reverse=True)
 
 
@@ -4878,7 +4908,7 @@ def api_revenue_structure(stock: str = "600519", years: str = "8", refresh: str 
         years = normalize_years(years_param, default=8)
 
         return get_cached_payload_or_build(
-            "revenue_structure_v7",
+            "revenue_structure_v8",
             stock,
             years,
             builder=lambda: get_revenue_structure_payload(stock=stock, years=years),
