@@ -984,10 +984,6 @@ export default function IndustryMonitorClient() {
       >
         <div className="industry-monitor-summary">
           <div>
-            <span>监控对象</span>
-            <strong>{query.stock}</strong>
-          </div>
-          <div>
             <span>行业模块</span>
             <strong>{moduleText}</strong>
           </div>
