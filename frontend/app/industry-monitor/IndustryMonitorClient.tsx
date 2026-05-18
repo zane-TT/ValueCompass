@@ -253,6 +253,15 @@ function isIndicatorGroup(value: unknown): value is IndustryIndicatorGroup {
   return Boolean(value && typeof value === "object" && "tables" in value && "source" in value);
 }
 
+function isTableCollection(value: unknown): value is Record<string, IndustryTablePreview> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.values(value).some((item) => isTablePreview(item)),
+  );
+}
+
 function findDateColumn(columns: string[]) {
   return columns.find((column) => DATE_KEYWORDS.some((keyword) => column.toLowerCase().includes(keyword.toLowerCase())));
 }
@@ -340,6 +349,14 @@ function collectMonitorMetrics(industryData?: IndustryDataResponse | null) {
       }
       if (isTablePreview(metricValue)) {
         metrics.push(buildMetricFromTable(moduleKey, null, metricKey, metricValue, modulePayload.source?.join("、")));
+        return;
+      }
+      if (isTableCollection(metricValue)) {
+        Object.entries(metricValue).forEach(([tableKey, table]) => {
+          if (isTablePreview(table)) {
+            metrics.push(buildMetricFromTable(moduleKey, metricKey, tableKey, table, modulePayload.source?.join("、")));
+          }
+        });
       }
     });
   });
@@ -376,15 +393,15 @@ function getNonferrousModule(industryData?: IndustryDataResponse | null) {
   return industryData?.data?.nonferrous_chemical ?? null;
 }
 
-function getCommodityMetrics(modulePayload?: IndustryModulePayload | null) {
-  const commodityPrices = modulePayload?.metrics?.commodityPrices;
+function getCommodityMetrics(modulePayload?: IndustryModulePayload | null, metricKey = "commodityPrices") {
+  const commodityPrices = modulePayload?.metrics?.[metricKey];
   if (!isRecord(commodityPrices)) return null;
   const metrics = commodityPrices.metrics;
   return isRecord(metrics) ? metrics : null;
 }
 
-function collectCommodityQuotes(modulePayload?: IndustryModulePayload | null): CommodityQuote[] {
-  const metrics = getCommodityMetrics(modulePayload);
+function collectCommodityQuotes(modulePayload?: IndustryModulePayload | null, metricKey = "commodityPrices"): CommodityQuote[] {
+  const metrics = getCommodityMetrics(modulePayload, metricKey);
   const rows = metrics?.realtimeFutures;
   if (!Array.isArray(rows)) return [];
   return rows.filter(isRecord).map((row) => ({
@@ -400,8 +417,8 @@ function collectCommodityQuotes(modulePayload?: IndustryModulePayload | null): C
   }));
 }
 
-function collectCommoditySeries(modulePayload?: IndustryModulePayload | null): CommoditySeries[] {
-  const metrics = getCommodityMetrics(modulePayload);
+function collectCommoditySeries(modulePayload?: IndustryModulePayload | null, metricKey = "commodityPrices"): CommoditySeries[] {
+  const metrics = getCommodityMetrics(modulePayload, metricKey);
   const rows = metrics?.spotBasisSeries;
   if (!Array.isArray(rows)) return [];
   const grouped = new Map<string, { name: string; unit: string; points: MetricPoint[] }>();
@@ -593,6 +610,214 @@ function DetailTable({ metric }: { metric: MonitorMetric }) {
   );
 }
 
+function IndustrySpecificPanel({
+  query,
+  modulePayload,
+  metrics,
+  extractedMetrics,
+}: {
+  query: QueryState;
+  modulePayload: IndustryModulePayload | null;
+  metrics: MonitorMetric[];
+  extractedMetrics: ExtractedMetric[];
+}) {
+  const title = MODULE_LABELS[query.industries] || "行业专项";
+  const nonCommonMetrics = metrics.filter((metric) => !metric.groupTitle || metric.groupTitle === "freightIndices");
+  const commodityQuotes = collectCommodityQuotes(modulePayload);
+  const commoditySeries = collectCommoditySeries(modulePayload);
+  const fuelQuotes = collectCommodityQuotes(modulePayload, "fuelPrices");
+  const fuelSeries = collectCommoditySeries(modulePayload, "fuelPrices");
+  const batteryQuotes = collectCommodityQuotes(modulePayload, "batteryMaterials");
+  const batterySeries = collectCommoditySeries(modulePayload, "batteryMaterials");
+  const productionMetrics = extractedMetrics.filter((metric) => metric.moduleKey === query.industries);
+
+  if (query.industries === "nonferrous_chemical") {
+    const energyMetrics = metrics.filter((metric) => metric.groupTitle === GROUP_LABELS.energyCostIndicators);
+    return (
+      <SectionShell
+        title="有色/化工专项监控"
+        description="把商品期货、现货基差、能源成本和产销披露放到同一屏，直接看价格和经营变量。"
+        meta={`${commodityQuotes.length} 个商品报价 / ${commoditySeries.length} 条现货序列`}
+      >
+        <div className="industry-subsection-title">
+          <h3>商品期货报价</h3>
+          <span>价格、开盘、高低区间、较结算变化</span>
+        </div>
+        <div className="commodity-quote-grid">
+          {commodityQuotes.slice(0, 12).map((quote) => (
+            <CommodityQuoteCard key={quote.symbol} quote={quote} />
+          ))}
+          {!commodityQuotes.length ? <div className="subtle">暂无商品期货报价。</div> : null}
+        </div>
+
+        <div className="industry-subsection-title">
+          <h3>现货价格趋势</h3>
+          <span>来自现货/基差序列，展示最近交易日走势</span>
+        </div>
+        <div className="commodity-series-grid">
+          {commoditySeries.slice(0, 6).map((series) => (
+            <CommoditySeriesCard key={series.symbol} series={series} />
+          ))}
+          {!commoditySeries.length ? <div className="subtle">暂无现货价格序列。</div> : null}
+        </div>
+
+        <div className="industry-subsection-title">
+          <h3>能源成本走势</h3>
+          <span>油价、能源库存、能源指数、碳市场等成本变量</span>
+        </div>
+        <div className="industry-monitor-grid">
+          {energyMetrics.slice(0, 6).map((metric) => (
+            <MetricCard key={metric.id} metric={metric} />
+          ))}
+          {!energyMetrics.length ? <div className="subtle">暂无能源成本图表。</div> : null}
+        </div>
+
+        <div className="industry-subsection-title">
+          <h3>产销披露</h3>
+          <span>从年报文本抽取产量、销量、产能、单位成本或均价</span>
+        </div>
+        <div className="industry-extracted-grid">
+          {productionMetrics.slice(0, 6).map((metric) => (
+            <article key={metric.id} className="industry-extracted-card">
+              <div className="industry-monitor-eyebrow">{metric.title}</div>
+              <div className="industry-monitor-value">
+                {formatNumber(metric.value, 2)}
+                {metric.unit ? <small>{metric.unit}</small> : null}
+              </div>
+              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+            </article>
+          ))}
+          {!productionMetrics.length ? <div className="subtle">暂无可抽取的产销披露。</div> : null}
+        </div>
+      </SectionShell>
+    );
+  }
+
+  if (query.industries === "shipping") {
+    const freightMetrics = metrics.filter((metric) => metric.groupTitle === "freightIndices");
+    return (
+      <SectionShell title="航运专项监控" description="直接展示运价指数、燃油价格和年报里的箱量/吞吐量披露。" meta={`${freightMetrics.length} 个运价指标`}>
+        <div className="industry-subsection-title">
+          <h3>运价指数</h3>
+          <span>BDI、BCI、BPI、油轮指数和中国运价指数</span>
+        </div>
+        <div className="industry-monitor-grid">
+          {freightMetrics.slice(0, 9).map((metric) => (
+            <MetricCard key={metric.id} metric={metric} />
+          ))}
+          {!freightMetrics.length ? <div className="subtle">暂无运价指数。</div> : null}
+        </div>
+
+        <div className="industry-subsection-title">
+          <h3>燃油价格</h3>
+          <span>原油、燃油、低硫燃油等成本变量</span>
+        </div>
+        <div className="commodity-quote-grid">
+          {fuelQuotes.slice(0, 6).map((quote) => (
+            <CommodityQuoteCard key={quote.symbol} quote={quote} />
+          ))}
+          {!fuelQuotes.length ? <div className="subtle">暂无燃油报价。</div> : null}
+        </div>
+        <div className="commodity-series-grid">
+          {fuelSeries.slice(0, 3).map((series) => (
+            <CommoditySeriesCard key={series.symbol} series={series} />
+          ))}
+        </div>
+
+        <div className="industry-subsection-title">
+          <h3>箱量/吞吐披露</h3>
+          <span>从年报文本抽取 TEU、吞吐量、货运量等指标</span>
+        </div>
+        <div className="industry-extracted-grid">
+          {productionMetrics.slice(0, 6).map((metric) => (
+            <article key={metric.id} className="industry-extracted-card">
+              <div className="industry-monitor-eyebrow">{metric.title}</div>
+              <div className="industry-monitor-value">
+                {formatNumber(metric.value, 2)}
+                {metric.unit ? <small>{metric.unit}</small> : null}
+              </div>
+              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+            </article>
+          ))}
+          {!productionMetrics.length ? <div className="subtle">暂无可抽取的箱量/吞吐披露。</div> : null}
+        </div>
+      </SectionShell>
+    );
+  }
+
+  if (query.industries === "financial") {
+    return (
+      <SectionShell title="金融专项监控" description="直接展示公司金融指标、LPR、货币供应、社融信贷和保险收入。" meta={`${nonCommonMetrics.length} 张金融表`}>
+        <div className="industry-monitor-grid">
+          {nonCommonMetrics.slice(0, 9).map((metric) => (
+            <MetricCard key={metric.id} metric={metric} />
+          ))}
+          {!nonCommonMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
+        </div>
+      </SectionShell>
+    );
+  }
+
+  if (query.industries === "auto_new_energy") {
+    const autoMetrics = nonCommonMetrics.filter((metric) => !metric.id.includes("batteryMaterials"));
+    return (
+      <SectionShell title="汽车新能源专项监控" description="直接展示乘联会销量、批发、出口、新能源渗透和电池材料价格。" meta={`${autoMetrics.length} 个汽车指标`}>
+        <div className="industry-subsection-title">
+          <h3>销量/批发/出口</h3>
+          <span>乘联会整体市场指标</span>
+        </div>
+        <div className="industry-monitor-grid">
+          {autoMetrics.slice(0, 9).map((metric) => (
+            <MetricCard key={metric.id} metric={metric} />
+          ))}
+          {!autoMetrics.length ? <div className="subtle">暂无汽车销量指标。</div> : null}
+        </div>
+
+        <div className="industry-subsection-title">
+          <h3>电池材料价格</h3>
+          <span>锂、镍、铜、铝、工业硅等材料报价和趋势</span>
+        </div>
+        <div className="commodity-quote-grid">
+          {batteryQuotes.slice(0, 8).map((quote) => (
+            <CommodityQuoteCard key={quote.symbol} quote={quote} />
+          ))}
+          {!batteryQuotes.length ? <div className="subtle">暂无电池材料报价。</div> : null}
+        </div>
+        <div className="commodity-series-grid">
+          {batterySeries.slice(0, 4).map((series) => (
+            <CommoditySeriesCard key={series.symbol} series={series} />
+          ))}
+        </div>
+      </SectionShell>
+    );
+  }
+
+  return (
+    <SectionShell title={`${title}专项监控`} description="展示当前行业模块自己的经营披露和专项指标，避免只看通用宏观数据。" meta={`${nonCommonMetrics.length + productionMetrics.length} 个专项项`}>
+      <div className="industry-monitor-grid">
+        {nonCommonMetrics.slice(0, 9).map((metric) => (
+          <MetricCard key={metric.id} metric={metric} />
+        ))}
+      </div>
+      {productionMetrics.length ? (
+        <div className="industry-extracted-grid">
+          {productionMetrics.slice(0, 6).map((metric) => (
+            <article key={metric.id} className="industry-extracted-card">
+              <div className="industry-monitor-eyebrow">{metric.title}</div>
+              <div className="industry-monitor-value">
+                {formatNumber(metric.value, 2)}
+                {metric.unit ? <small>{metric.unit}</small> : null}
+              </div>
+              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {!nonCommonMetrics.length && !productionMetrics.length ? <div className="subtle">暂无专项数据。</div> : null}
+    </SectionShell>
+  );
+}
+
 export default function IndustryMonitorClient() {
   const initialQuery = useRef(readQueryState());
   const [query, setQuery] = useState<QueryState>(initialQuery.current);
@@ -605,14 +830,11 @@ export default function IndustryMonitorClient() {
 
   const monitorMetrics = useMemo(() => collectMonitorMetrics(industryData), [industryData]);
   const extractedMetrics = useMemo(() => collectExtractedMetrics(industryData), [industryData]);
-  const headlineMetrics = monitorMetrics.filter((metric) => metric.value !== null).slice(0, 9);
-  const detailMetrics = monitorMetrics.slice(0, 8);
-  const nonferrousModule = useMemo(() => getNonferrousModule(industryData), [industryData]);
-  const commodityQuotes = useMemo(() => collectCommodityQuotes(nonferrousModule), [nonferrousModule]);
-  const commoditySeries = useMemo(() => collectCommoditySeries(nonferrousModule), [nonferrousModule]);
-  const energyMetrics = monitorMetrics.filter((metric) => metric.moduleKey === "nonferrous_chemical" && metric.groupTitle === GROUP_LABELS.energyCostIndicators);
-  const productionMetrics = extractedMetrics.filter((metric) => metric.moduleKey === "nonferrous_chemical");
   const activeModules = industryData?.industries ?? [];
+  const selectedModuleKey = query.industries === "auto" ? activeModules[0] || query.industries : query.industries;
+  const selectedMonitorMetrics = monitorMetrics.filter((metric) => metric.moduleKey === selectedModuleKey);
+  const headlineMetrics = selectedMonitorMetrics.filter((metric) => metric.value !== null).slice(0, 9);
+  const detailMetrics = selectedMonitorMetrics.slice(0, 8);
   const moduleText = activeModules.map((item) => MODULE_LABELS[item] || item).join("、") || "自动识别";
 
   function syncUrl(nextQuery: QueryState) {
@@ -738,64 +960,12 @@ export default function IndustryMonitorClient() {
         </div>
       </SectionShell>
 
-      {query.industries === "nonferrous_chemical" || nonferrousModule ? (
-        <SectionShell
-          title="有色/化工专项监控"
-          description="把商品期货、现货基差、能源成本和产销披露放到同一屏，直接看价格和经营变量。"
-          meta={`${commodityQuotes.length} 个商品报价 / ${commoditySeries.length} 条现货序列`}
-        >
-          <div className="industry-subsection-title">
-            <h3>商品期货报价</h3>
-            <span>价格、开盘、高低区间、较结算变化</span>
-          </div>
-          <div className="commodity-quote-grid">
-            {commodityQuotes.slice(0, 12).map((quote) => (
-              <CommodityQuoteCard key={quote.symbol} quote={quote} />
-            ))}
-            {!commodityQuotes.length ? <div className="subtle">暂无商品期货报价。</div> : null}
-          </div>
-
-          <div className="industry-subsection-title">
-            <h3>现货价格趋势</h3>
-            <span>来自现货/基差序列，展示最近交易日走势</span>
-          </div>
-          <div className="commodity-series-grid">
-            {commoditySeries.slice(0, 6).map((series) => (
-              <CommoditySeriesCard key={series.symbol} series={series} />
-            ))}
-            {!commoditySeries.length ? <div className="subtle">暂无现货价格序列。</div> : null}
-          </div>
-
-          <div className="industry-subsection-title">
-            <h3>能源成本走势</h3>
-            <span>油价、能源库存、能源指数、碳市场等成本变量</span>
-          </div>
-          <div className="industry-monitor-grid">
-            {energyMetrics.slice(0, 6).map((metric) => (
-              <MetricCard key={metric.id} metric={metric} />
-            ))}
-            {!energyMetrics.length ? <div className="subtle">暂无能源成本图表。</div> : null}
-          </div>
-
-          <div className="industry-subsection-title">
-            <h3>产销披露</h3>
-            <span>从年报文本抽取产量、销量、产能、单位成本或均价</span>
-          </div>
-          <div className="industry-extracted-grid">
-            {productionMetrics.slice(0, 6).map((metric) => (
-              <article key={metric.id} className="industry-extracted-card">
-                <div className="industry-monitor-eyebrow">{metric.title}</div>
-                <div className="industry-monitor-value">
-                  {formatNumber(metric.value, 2)}
-                  {metric.unit ? <small>{metric.unit}</small> : null}
-                </div>
-                {metric.sourceText ? <p>{metric.sourceText}</p> : null}
-              </article>
-            ))}
-            {!productionMetrics.length ? <div className="subtle">暂无可抽取的产销披露。</div> : null}
-          </div>
-        </SectionShell>
-      ) : null}
+      <IndustrySpecificPanel
+        query={{ ...query, industries: selectedModuleKey }}
+        modulePayload={industryData?.data?.[selectedModuleKey] ?? getNonferrousModule(industryData)}
+        metrics={selectedMonitorMetrics}
+        extractedMetrics={extractedMetrics}
+      />
 
       {extractedMetrics.length ? (
         <SectionShell
