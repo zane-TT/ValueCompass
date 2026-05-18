@@ -2080,9 +2080,40 @@ def build_commodity_prices_payload(symbols: str | None = None, days: str | None 
     }
 
 
-def safe_ak_table(tool_key: str, builder: Callable[[], pd.DataFrame], limit: int = 12) -> dict:
+def find_table_date_column(df: pd.DataFrame) -> str | None:
+    for column in df.columns:
+        text = str(column).lower()
+        if any(keyword in text for keyword in ["日期", "时间", "月份", "date", "time", "month"]):
+            return str(column)
+    return None
+
+
+def prepare_industry_table(df: pd.DataFrame, max_age_days: int | None = None) -> tuple[pd.DataFrame, str | None]:
+    if df is None or df.empty:
+        return df, None
+    date_column = find_table_date_column(df)
+    if not date_column or date_column not in df.columns:
+        return df, None
+
+    cleaned = df.copy()
+    parsed_dates = pd.to_datetime(cleaned[date_column], errors="coerce")
+    today_ts = pd.Timestamp(datetime.now().date())
+    cleaned = cleaned[(parsed_dates.isna()) | (parsed_dates <= today_ts)].copy()
+    parsed_dates = pd.to_datetime(cleaned[date_column], errors="coerce")
+    if parsed_dates.notna().any():
+        cleaned = cleaned.assign(__date_sort=parsed_dates).sort_values("__date_sort").drop(columns=["__date_sort"])
+        latest_date = parsed_dates.max().date()
+        if max_age_days is not None and latest_date < today_ts.date() - timedelta(days=max_age_days):
+            return cleaned.iloc[0:0], f"数据最新日期为 {latest_date.isoformat()}，已超过 {max_age_days} 天，暂不作为当前监控指标展示。"
+    return cleaned, None
+
+
+def safe_ak_table(tool_key: str, builder: Callable[[], pd.DataFrame], limit: int = 12, max_age_days: int | None = None) -> dict:
     try:
         df = get_ak_dataframe_cached((tool_key,), builder)
+        df, stale_error = prepare_industry_table(df, max_age_days=max_age_days)
+        if stale_error:
+            return {"status": "stale", "error": stale_error, "columns": [str(column) for column in df.columns], "rows": [], "rowCount": 0}
         return {
             "status": "ok" if df is not None and not df.empty else "empty",
             **dataframe_preview(df, limit=limit),
@@ -2147,20 +2178,31 @@ def build_customs_trade_indicators() -> dict:
 
 
 def build_energy_cost_indicators() -> dict:
+    def fetch_domestic_carbon_market() -> pd.DataFrame:
+        for symbol in ["湖北", "上海", "北京", "广东", "深圳", "天津", "重庆", "福建"]:
+            try:
+                df = ak.energy_carbon_domestic(symbol=symbol)
+                if df is not None and not df.empty:
+                    return df
+            except Exception as exc:
+                print(f"[WARN] Carbon market unavailable, symbol={symbol}: {exc}")
+        return pd.DataFrame()
+
     return {
         "status": "partial",
         "source": "AKShare / 能源价格、库存与碳市场公开指标",
         "tables": {
-            "oilPriceAdjustments": safe_ak_table("energy_oil_hist", lambda: ak.energy_oil_hist(), limit=12),
+            "oilPriceAdjustments": safe_ak_table("energy_oil_hist_v2", lambda: ak.energy_oil_hist(), limit=12),
             "dailyEnergyInventory": safe_ak_table(
-                "energy_daily_inventory",
+                "energy_daily_inventory_v2",
                 lambda: ak.macro_china_daily_energy(),
                 limit=12,
+                max_age_days=45,
             ),
-            "energyIndex": safe_ak_table("energy_index", lambda: ak.macro_china_energy_index(), limit=12),
+            "energyIndex": safe_ak_table("energy_index_v2", lambda: ak.macro_china_energy_index(), limit=12),
             "domesticCarbonMarket": safe_ak_table(
-                "energy_carbon_domestic_hubei",
-                lambda: ak.energy_carbon_domestic(symbol="湖北"),
+                "energy_carbon_domestic_fallback_v2",
+                fetch_domestic_carbon_market,
                 limit=12,
             ),
         },
@@ -5023,7 +5065,7 @@ def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str
     try:
         normalized_years = normalize_years(years, default=8)
         return get_cached_payload_or_build(
-            "industry_data_v1",
+            "industry_data_v2",
             industries or "all",
             normalized_years,
             builder=lambda: build_industry_data_payload(industries=industries, years=str(normalized_years)),

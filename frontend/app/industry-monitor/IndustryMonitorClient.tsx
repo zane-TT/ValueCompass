@@ -63,6 +63,14 @@ type MetricPoint = {
   value: number;
 };
 
+type ChartHoverPoint = {
+  label: string;
+  value: number;
+  x: number;
+  y: number;
+  unit?: string;
+};
+
 type MonitorMetric = {
   id: string;
   moduleKey: string;
@@ -220,6 +228,16 @@ function summarizePoints(points: MetricPoint[]) {
   const delta = latest.value - first.value;
   const deltaPct = first.value === 0 ? null : (delta / Math.abs(first.value)) * 100;
   return { first, latest, min, max, delta, deltaPct, count: valid.length };
+}
+
+function ChartTooltip({ point }: { point: ChartHoverPoint | null }) {
+  if (!point) return null;
+  return (
+    <div className="industry-chart-tooltip" style={{ left: `${point.x}%`, top: `${point.y}%` }}>
+      <span>{point.label || "-"}</span>
+      <strong>{formatValueWithUnit(point.value, point.unit || "")}</strong>
+    </div>
+  );
 }
 
 function formatCell(value: IndustryCell | undefined) {
@@ -456,6 +474,7 @@ function isIndustryOverviewMetric(moduleKey: string, metric: MonitorMetric) {
 }
 
 function Sparkline({ points, unit = "" }: { points: MetricPoint[]; unit?: string }) {
+  const [activePoint, setActivePoint] = useState<ChartHoverPoint | null>(null);
   const validPoints = points.filter((point) => Number.isFinite(point.value));
   const values = validPoints.map((point) => point.value);
   if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
@@ -468,6 +487,11 @@ function Sparkline({ points, unit = "" }: { points: MetricPoint[]; unit?: string
   const bottom = 34;
   const width = right - left;
   const height = bottom - top;
+  const toHoverPoint = (value: number, index: number): ChartHoverPoint => {
+    const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
+    const y = bottom - ((value - min) / range) * height;
+    return { label: validPoints[index]?.label || "-", value, x, y: (y / 40) * 100, unit };
+  };
   const polyline = values
     .map((value, index) => {
       const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
@@ -477,25 +501,38 @@ function Sparkline({ points, unit = "" }: { points: MetricPoint[]; unit?: string
     .join(" ");
 
   return (
-    <svg className="industry-sparkline" viewBox="0 0 100 40" role="img" aria-label="趋势图">
+    <div className="industry-chart-wrap" onMouseLeave={() => setActivePoint(null)}>
+      <svg className="industry-sparkline" viewBox="0 0 100 40" role="img" aria-label="趋势图">
       <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
       {values.map((value, index) => {
         const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
         const y = bottom - ((value - min) / range) * height;
+        const hoverPoint = toHoverPoint(value, index);
         return (
           <g key={`${value}-${index}`}>
             <circle cx={x} cy={y} r={index === values.length - 1 ? 3 : 1.8} />
-            <circle className="industry-hover-point" cx={x} cy={y} r="8">
-              <title>{`${validPoints[index]?.label || "-"}  ${formatValueWithUnit(value, unit)}`}</title>
-            </circle>
+            <circle
+              className="industry-hover-point"
+              cx={x}
+              cy={y}
+              r="8"
+              tabIndex={0}
+              onBlur={() => setActivePoint(null)}
+              onClick={() => setActivePoint(hoverPoint)}
+              onFocus={() => setActivePoint(hoverPoint)}
+              onMouseEnter={() => setActivePoint(hoverPoint)}
+            />
           </g>
         );
       })}
-    </svg>
+      </svg>
+      <ChartTooltip point={activePoint} />
+    </div>
   );
 }
 
 function LineChart({ points, unit = "" }: { points: MetricPoint[]; unit?: string }) {
+  const [activePoint, setActivePoint] = useState<ChartHoverPoint | null>(null);
   const validPoints = points.filter((point) => Number.isFinite(point.value));
   const values = validPoints.map((point) => point.value);
   if (values.length < 2) return <div className="industry-sparkline-empty">趋势不足</div>;
@@ -508,6 +545,11 @@ function LineChart({ points, unit = "" }: { points: MetricPoint[]; unit?: string
   const bottom = 84;
   const width = right - left;
   const height = bottom - top;
+  const toHoverPoint = (value: number, index: number): ChartHoverPoint => {
+    const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
+    const y = bottom - ((value - min) / range) * height;
+    return { label: validPoints[index]?.label || "-", value, x, y: (y / 96) * 100, unit };
+  };
   const polyline = values
     .map((value, index) => {
       const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
@@ -517,18 +559,31 @@ function LineChart({ points, unit = "" }: { points: MetricPoint[]; unit?: string
     .join(" ");
 
   return (
-    <svg className="industry-line-chart" viewBox="0 0 100 96" role="img" aria-label="价格趋势图">
+    <div className="industry-chart-wrap" onMouseLeave={() => setActivePoint(null)}>
+      <svg className="industry-line-chart" viewBox="0 0 100 96" role="img" aria-label="价格趋势图">
       <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinejoin="round" strokeLinecap="round" />
       {values.map((value, index) => {
         const x = values.length === 1 ? left : left + (index / (values.length - 1)) * width;
         const y = bottom - ((value - min) / range) * height;
+        const hoverPoint = toHoverPoint(value, index);
         return (
-          <circle className="industry-hover-point" key={`${value}-${index}`} cx={x} cy={y} r="6">
-            <title>{`${validPoints[index]?.label || "-"}  ${formatValueWithUnit(value, unit)}`}</title>
-          </circle>
+          <circle
+            className="industry-hover-point"
+            key={`${value}-${index}`}
+            cx={x}
+            cy={y}
+            r="6"
+            tabIndex={0}
+            onBlur={() => setActivePoint(null)}
+            onClick={() => setActivePoint(hoverPoint)}
+            onFocus={() => setActivePoint(hoverPoint)}
+            onMouseEnter={() => setActivePoint(hoverPoint)}
+          />
         );
       })}
-    </svg>
+      </svg>
+      <ChartTooltip point={activePoint} />
+    </div>
   );
 }
 

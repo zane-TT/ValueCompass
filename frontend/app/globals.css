@@ -1016,11 +1016,48 @@ button {
   fill: currentColor;
 }
 
+.industry-chart-wrap {
+  position: relative;
+  min-width: 0;
+}
+
 .industry-hover-point {
   cursor: crosshair;
   fill: transparent !important;
   pointer-events: all;
   stroke: transparent;
+}
+
+.industry-chart-tooltip {
+  position: absolute;
+  z-index: 3;
+  min-width: 112px;
+  max-width: 180px;
+  padding: 7px 9px;
+  border: 2px solid var(--line);
+  background: #fff;
+  box-shadow: 3px 3px 0 rgba(18, 18, 18, 0.82);
+  color: var(--ink);
+  transform: translate(-50%, calc(-100% - 8px));
+  pointer-events: none;
+}
+
+.industry-chart-tooltip span,
+.industry-chart-tooltip strong {
+  display: block;
+  line-height: 1.2;
+}
+
+.industry-chart-tooltip span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.industry-chart-tooltip strong {
+  margin-top: 3px;
+  font-size: 15px;
+  font-weight: 950;
 }
 
 .trend-range-summary {
