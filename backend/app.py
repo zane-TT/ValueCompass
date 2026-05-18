@@ -2182,6 +2182,22 @@ def build_customs_trade_indicators() -> dict:
 
 
 def build_energy_cost_indicators() -> dict:
+    def fetch_energy_futures_inventory() -> pd.DataFrame:
+        frames = []
+        for symbol in ["低硫燃料油", "液化石油气", "沥青", "燃油"]:
+            try:
+                df = ak.futures_inventory_em(symbol=symbol)
+                df, stale_error = prepare_industry_table(df, max_age_days=10)
+                if stale_error or df is None or df.empty:
+                    print(f"[WARN] Energy futures inventory stale or empty, symbol={symbol}: {stale_error or 'empty'}")
+                    continue
+                df = df.copy()
+                df.insert(0, "品种", symbol)
+                frames.append(df)
+            except Exception as exc:
+                print(f"[WARN] Energy futures inventory unavailable, symbol={symbol}: {exc}")
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
     def fetch_domestic_carbon_market() -> pd.DataFrame:
         for symbol in ["湖北", "上海", "北京", "广东", "深圳", "天津", "重庆", "福建"]:
             try:
@@ -2198,8 +2214,8 @@ def build_energy_cost_indicators() -> dict:
         "tables": {
             "oilPriceAdjustments": safe_ak_table("energy_oil_hist_v2", lambda: ak.energy_oil_hist(), limit=12),
             "dailyEnergyInventory": safe_ak_table(
-                "energy_daily_inventory_v2",
-                lambda: ak.macro_china_daily_energy(),
+                "energy_futures_inventory_v1",
+                fetch_energy_futures_inventory,
                 limit=12,
                 max_age_days=45,
             ),
