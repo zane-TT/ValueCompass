@@ -2033,8 +2033,11 @@ def build_commodity_prices_payload(symbols: str | None = None, days: str | None 
     today = datetime.now(timezone.utc)
     start_date = today - timedelta(days=normalized_days)
 
-    realtime = load_commodity_realtime_prices(normalized_symbols)
-    spot_basis_series = load_commodity_spot_basis_series(normalized_symbols, start_date, today)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        realtime_future = executor.submit(load_commodity_realtime_prices, normalized_symbols)
+        spot_basis_future = executor.submit(load_commodity_spot_basis_series, normalized_symbols, start_date, today)
+        realtime = realtime_future.result()
+        spot_basis_series = spot_basis_future.result()
 
     latest_spot_basis_by_symbol: dict[str, dict] = {}
     for item in spot_basis_series:
@@ -2127,34 +2130,50 @@ def safe_ak_table(tool_key: str, builder: Callable[[], pd.DataFrame], limit: int
         return {"status": "error", "error": str(exc), "columns": [], "rows": []}
 
 
+def build_industry_table_group(tasks: dict[str, Callable[[], dict]], max_workers: int = 4) -> dict:
+    if not tasks:
+        return {}
+    results: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(len(tasks), max_workers)) as executor:
+        future_map = {executor.submit(builder): key for key, builder in tasks.items()}
+        for future in as_completed(future_map):
+            key = future_map[future]
+            try:
+                results[key] = future.result()
+            except Exception as exc:
+                print(f"[WARN] Industry table task failed, key={key}: {exc}")
+                results[key] = {"status": "error", "error": str(exc), "columns": [], "rows": []}
+    return {key: results.get(key, {"status": "empty", "columns": [], "rows": []}) for key in tasks}
+
+
 def build_nbs_operating_indicators() -> dict:
     return {
         "status": "partial",
         "source": "AKShare / 国家统计局及公开宏观经营指标",
-        "tables": {
-            "industrialProductionYoy": safe_ak_table(
+        "tables": build_industry_table_group({
+            "industrialProductionYoy": lambda: safe_ak_table(
                 "nbs_industrial_production_yoy",
                 lambda: ak.macro_china_industrial_production_yoy(),
                 limit=12,
             ),
-            "industrialValueAdded": safe_ak_table(
+            "industrialValueAdded": lambda: safe_ak_table(
                 "nbs_industrial_value_added",
                 lambda: ak.macro_china_gyzjz(),
                 limit=12,
             ),
-            "manufacturingPmi": safe_ak_table("nbs_manufacturing_pmi", lambda: ak.macro_china_pmi(), limit=12),
-            "ppi": safe_ak_table("nbs_ppi", lambda: ak.macro_china_ppi(), limit=12),
-            "electricityConsumption": safe_ak_table(
+            "manufacturingPmi": lambda: safe_ak_table("nbs_manufacturing_pmi", lambda: ak.macro_china_pmi(), limit=12),
+            "ppi": lambda: safe_ak_table("nbs_ppi", lambda: ak.macro_china_ppi(), limit=12),
+            "electricityConsumption": lambda: safe_ak_table(
                 "nbs_electricity_consumption",
                 lambda: ak.macro_china_society_electricity(),
                 limit=12,
             ),
-            "enterpriseBoomIndex": safe_ak_table(
+            "enterpriseBoomIndex": lambda: safe_ak_table(
                 "nbs_enterprise_boom_index",
                 lambda: ak.macro_china_enterprise_boom_index(),
                 limit=12,
             ),
-        },
+        }, max_workers=4),
         "dataGaps": ["当前为宏观经营景气和工业需求代理指标，尚未映射到细分行业产量、库存和订单口径。"],
     }
 
@@ -2163,20 +2182,20 @@ def build_customs_trade_indicators() -> dict:
     return {
         "status": "partial",
         "source": "AKShare / 海关进出口公开指标",
-        "tables": {
-            "customsImportExportOverview": safe_ak_table(
+        "tables": build_industry_table_group({
+            "customsImportExportOverview": lambda: safe_ak_table(
                 "customs_import_export_overview",
                 lambda: ak.macro_china_hgjck(),
                 limit=12,
             ),
-            "exportsYoyUsd": safe_ak_table("customs_exports_yoy_usd", lambda: ak.macro_china_exports_yoy(), limit=12),
-            "importsYoyUsd": safe_ak_table("customs_imports_yoy_usd", lambda: ak.macro_china_imports_yoy(), limit=12),
-            "tradeBalanceUsd": safe_ak_table(
+            "exportsYoyUsd": lambda: safe_ak_table("customs_exports_yoy_usd", lambda: ak.macro_china_exports_yoy(), limit=12),
+            "importsYoyUsd": lambda: safe_ak_table("customs_imports_yoy_usd", lambda: ak.macro_china_imports_yoy(), limit=12),
+            "tradeBalanceUsd": lambda: safe_ak_table(
                 "customs_trade_balance_usd",
                 lambda: ak.macro_china_trade_balance(),
                 limit=12,
             ),
-        },
+        }, max_workers=4),
         "dataGaps": ["当前为总量进出口和同比指标，尚未接入 HS 编码、目的地、商品分项或公司出口口径。"],
     }
 
@@ -2211,21 +2230,21 @@ def build_energy_cost_indicators() -> dict:
     return {
         "status": "partial",
         "source": "AKShare / 能源价格、库存与碳市场公开指标",
-        "tables": {
-            "oilPriceAdjustments": safe_ak_table("energy_oil_hist_v2", lambda: ak.energy_oil_hist(), limit=12),
-            "dailyEnergyInventory": safe_ak_table(
+        "tables": build_industry_table_group({
+            "oilPriceAdjustments": lambda: safe_ak_table("energy_oil_hist_v2", lambda: ak.energy_oil_hist(), limit=12),
+            "dailyEnergyInventory": lambda: safe_ak_table(
                 "energy_futures_inventory_v1",
                 fetch_energy_futures_inventory,
                 limit=12,
                 max_age_days=45,
             ),
-            "energyIndex": safe_ak_table("energy_index_v2", lambda: ak.macro_china_energy_index(), limit=12),
-            "domesticCarbonMarket": safe_ak_table(
+            "energyIndex": lambda: safe_ak_table("energy_index_v2", lambda: ak.macro_china_energy_index(), limit=12),
+            "domesticCarbonMarket": lambda: safe_ak_table(
                 "energy_carbon_domestic_fallback_v2",
                 fetch_domestic_carbon_market,
                 limit=12,
             ),
-        },
+        }, max_workers=4),
         "dataGaps": ["当前为能源成本和库存代理指标，尚未接入企业所在区域电价、长协煤价、天然气合同价等公司级成本口径。"],
     }
 
@@ -2330,16 +2349,20 @@ def build_nonferrous_chemical_metrics(stock: str, main_business_payload: dict, a
             r"(?P<label>单位成本|单吨成本|平均售价|销售均价)[^0-9]{0,30}(?P<value>[0-9,.]+)\s*(?P<unit>元/吨|元)",
         ],
     }
+    metrics = build_industry_table_group(
+        {
+            "macroOperatingIndicators": lambda: build_nbs_operating_indicators(),
+            "customsTradeIndicators": lambda: build_customs_trade_indicators(),
+            "energyCostIndicators": lambda: build_energy_cost_indicators(),
+            "commodityPrices": lambda: build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
+        },
+        max_workers=4,
+    )
     return {
         "tool": "nonferrous_chemical_metrics",
         "status": "partial",
         "stock": stock,
-        "metrics": {
-            "macroOperatingIndicators": build_nbs_operating_indicators(),
-            "customsTradeIndicators": build_customs_trade_indicators(),
-            "energyCostIndicators": build_energy_cost_indicators(),
-            "commodityPrices": build_commodity_prices_payload(symbols=commodity_symbols, days="30"),
-        },
+        "metrics": metrics,
         "source": ["AKShare 商品期货/现货基差", "AKShare 能源成本", "海关公开指标"],
         "dataGaps": ["电力成本、阳极、石油焦、煤沥青等专用成本项尚未逐项接入；产品-原料价差序列还未按具体行业模型封装。"],
     }
