@@ -2201,51 +2201,81 @@ def build_customs_trade_indicators() -> dict:
 
 
 def build_energy_cost_indicators() -> dict:
-    def fetch_energy_futures_inventory() -> pd.DataFrame:
-        frames = []
-        for symbol in ["低硫燃料油", "液化石油气", "沥青", "燃油"]:
-            try:
-                df = ak.futures_inventory_em(symbol=symbol)
-                df, stale_error = prepare_industry_table(df, max_age_days=10)
-                if stale_error or df is None or df.empty:
-                    print(f"[WARN] Energy futures inventory stale or empty, symbol={symbol}: {stale_error or 'empty'}")
-                    continue
-                df = df.copy()
-                df.insert(0, "品种", symbol)
-                frames.append(df)
-            except Exception as exc:
-                print(f"[WARN] Energy futures inventory unavailable, symbol={symbol}: {exc}")
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    def format_market_date(value) -> str:
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.date().isoformat()
+        return str(value or datetime.now().date())
 
-    def fetch_domestic_carbon_market() -> pd.DataFrame:
-        for symbol in ["湖北", "上海", "北京", "广东", "深圳", "天津", "重庆", "福建"]:
-            try:
-                df = ak.energy_carbon_domestic(symbol=symbol)
-                if df is not None and not df.empty:
-                    return df
-            except Exception as exc:
-                print(f"[WARN] Carbon market unavailable, symbol={symbol}: {exc}")
-        return pd.DataFrame()
+    def fetch_foreign_future_series(symbol: str, name: str, unit: str) -> pd.DataFrame:
+        rows = []
+        hist_df = ak.futures_foreign_hist(symbol=symbol)
+        if hist_df is not None and not hist_df.empty:
+            for _, row in hist_df.tail(90).iterrows():
+                rows.append(
+                    {
+                        "日期": format_market_date(row.get("date")),
+                        "名称": name,
+                        "价格": round(finite_float(row.get("close")), 4),
+                        "开盘": round(finite_float(row.get("open")), 4),
+                        "最高": round(finite_float(row.get("high")), 4),
+                        "最低": round(finite_float(row.get("low")), 4),
+                        "成交量": round(finite_float(row.get("volume")), 4),
+                        "单位": unit,
+                        "来源": "日线收盘",
+                    }
+                )
+
+        try:
+            realtime_df = ak.futures_foreign_commodity_realtime(symbol=symbol)
+            if realtime_df is not None and not realtime_df.empty:
+                row = realtime_df.iloc[0]
+                quote_date = format_market_date(row.get("日期") or datetime.now().date())
+                rows = [item for item in rows if str(item.get("日期")) != quote_date]
+                rows.append(
+                    {
+                        "日期": quote_date,
+                        "名称": str(row.get("名称") or name),
+                        "价格": round(finite_float(row.get("最新价")), 4),
+                        "开盘": round(finite_float(row.get("开盘价")), 4),
+                        "最高": round(finite_float(row.get("最高价")), 4),
+                        "最低": round(finite_float(row.get("最低价")), 4),
+                        "涨跌额": round(finite_float(row.get("涨跌额")), 4),
+                        "涨跌幅": round(finite_float(row.get("涨跌幅")), 4),
+                        "行情时间": str(row.get("行情时间") or ""),
+                        "单位": unit,
+                        "来源": "实时行情",
+                    }
+                )
+        except Exception as exc:
+            print(f"[WARN] Foreign futures realtime unavailable, symbol={symbol}: {exc}")
+
+        return pd.DataFrame(rows)
 
     return {
         "status": "partial",
-        "source": "AKShare / 能源价格、库存与碳市场公开指标",
+        "source": "AKShare / 外盘原油与碳排放期货行情",
         "tables": build_industry_table_group({
-            "oilPriceAdjustments": lambda: safe_ak_table("energy_oil_hist_v2", lambda: ak.energy_oil_hist(), limit=12),
-            "dailyEnergyInventory": lambda: safe_ak_table(
-                "energy_futures_inventory_v1",
-                fetch_energy_futures_inventory,
-                limit=12,
-                max_age_days=45,
+            "wtiCrudeOil": lambda: safe_ak_table(
+                "foreign_future_wti_crude_v2",
+                lambda: fetch_foreign_future_series("CL", "WTI 原油", "美元/桶"),
+                limit=45,
+                max_age_days=7,
             ),
-            "energyIndex": lambda: safe_ak_table("energy_index_v2", lambda: ak.macro_china_energy_index(), limit=12),
-            "domesticCarbonMarket": lambda: safe_ak_table(
-                "energy_carbon_domestic_fallback_v2",
-                fetch_domestic_carbon_market,
-                limit=12,
+            "brentCrudeOil": lambda: safe_ak_table(
+                "foreign_future_brent_crude_v2",
+                lambda: fetch_foreign_future_series("OIL", "布伦特原油", "美元/桶"),
+                limit=45,
+                max_age_days=7,
             ),
-        }, max_workers=4),
-        "dataGaps": ["当前为能源成本和库存代理指标，尚未接入企业所在区域电价、长协煤价、天然气合同价等公司级成本口径。"],
+            "euaCarbon": lambda: safe_ak_table(
+                "foreign_future_eua_carbon_v2",
+                lambda: fetch_foreign_future_series("EUA", "欧洲碳排放 EUA", "欧元/吨"),
+                limit=45,
+                max_age_days=7,
+            ),
+        }, max_workers=3),
+        "dataGaps": ["当前展示 WTI、布伦特和 EUA 碳排放期货行情；国内碳市场分交易所数据源稳定性较差，暂不放入默认监控。"],
     }
 
 
@@ -5108,7 +5138,7 @@ def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str
     try:
         normalized_years = normalize_years(years, default=8)
         return get_cached_payload_or_build(
-            "industry_data_v3",
+            "industry_data_v5",
             industries or "all",
             normalized_years,
             industry_cache_day(),

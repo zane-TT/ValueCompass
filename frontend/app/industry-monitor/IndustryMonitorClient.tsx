@@ -146,10 +146,9 @@ const TABLE_LABELS: Record<string, string> = {
   exportsYoyUsd: "出口同比",
   importsYoyUsd: "进口同比",
   tradeBalanceUsd: "贸易差额",
-  oilPriceAdjustments: "成品油调价",
-  dailyEnergyInventory: "能源库存",
-  energyIndex: "能源指数",
-  domesticCarbonMarket: "碳市场",
+  wtiCrudeOil: "WTI 原油",
+  brentCrudeOil: "布伦特原油",
+  euaCarbon: "EUA 碳排放",
   commodityPrices: "商品价格",
   freightIndices: "航运指数",
   fuelPrices: "燃油价格",
@@ -329,17 +328,21 @@ function buildPoints(table: IndustryTablePreview, valueColumn: string, dateColum
 function displayValueLabel(tableKey: string, valueColumn: string) {
   if (tableKey === "oilPriceAdjustments" && valueColumn === "汽油价格") return "汽油调后价";
   if (tableKey === "oilPriceAdjustments" && valueColumn === "柴油价格") return "柴油调后价";
+  if (["wtiCrudeOil", "brentCrudeOil", "euaCarbon"].includes(tableKey) && valueColumn === "价格") return "最新价格";
   return valueColumn || "数值";
 }
 
 function displayDateLabel(tableKey: string, label?: string) {
   if (!label || label === "-") return "-";
   if (tableKey === "oilPriceAdjustments") return `调价日 ${label}`;
+  if (["wtiCrudeOil", "brentCrudeOil", "euaCarbon"].includes(tableKey)) return `行情日 ${label}`;
   return label;
 }
 
 function displayUnit(tableKey: string, valueColumn: string, value: number | null) {
   if (tableKey === "oilPriceAdjustments") return "元/吨";
+  if (["wtiCrudeOil", "brentCrudeOil"].includes(tableKey)) return "美元/桶";
+  if (tableKey === "euaCarbon") return "欧元/吨";
   return inferUnit(valueColumn, value);
 }
 
@@ -819,8 +822,8 @@ function IndustrySpecificPanel({
         </div>
 
         <div className="industry-subsection-title">
-          <h3>能源成本走势</h3>
-          <span>油价、能源库存、能源指数、碳市场等成本变量</span>
+          <h3>国际原油与碳价格</h3>
+          <span>WTI、布伦特和 EUA 碳排放当天价格与历史趋势</span>
         </div>
         <div className="industry-monitor-grid">
           {energyMetrics.slice(0, 6).map((metric) => (
@@ -1055,13 +1058,6 @@ export default function IndustryMonitorClient() {
           ))}
         </div>
 
-        {headlineMetrics.length ? (
-          <div className="industry-monitor-grid">
-            {headlineMetrics.map((metric) => (
-              <MetricCard key={metric.id} metric={metric} />
-            ))}
-          </div>
-        ) : null}
       </SectionShell>
 
       <IndustrySpecificPanel
