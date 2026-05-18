@@ -2108,9 +2108,13 @@ def prepare_industry_table(df: pd.DataFrame, max_age_days: int | None = None) ->
     return cleaned, None
 
 
+def industry_cache_day() -> str:
+    return datetime.now().date().isoformat()
+
+
 def safe_ak_table(tool_key: str, builder: Callable[[], pd.DataFrame], limit: int = 12, max_age_days: int | None = None) -> dict:
     try:
-        df = get_ak_dataframe_cached((tool_key,), builder)
+        df = get_ak_dataframe_cached((tool_key, industry_cache_day()), builder)
         df, stale_error = prepare_industry_table(df, max_age_days=max_age_days)
         if stale_error:
             return {"status": "stale", "error": stale_error, "columns": [str(column) for column in df.columns], "rows": [], "rowCount": 0}
@@ -5068,6 +5072,7 @@ def api_industry_data(industries: str = "baijiu", years: str = "8", refresh: str
             "industry_data_v2",
             industries or "all",
             normalized_years,
+            industry_cache_day(),
             builder=lambda: build_industry_data_payload(industries=industries, years=str(normalized_years)),
             refresh=refresh == "1",
         )
