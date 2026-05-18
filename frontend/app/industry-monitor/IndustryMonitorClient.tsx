@@ -779,13 +779,31 @@ function IndustrySpecificPanel({
 
   if (query.industries === "financial") {
     return (
-      <SectionShell title="金融专项监控" description="直接展示公司金融指标、LPR、货币供应、社融信贷和保险收入。" meta={`${specialMetrics.length} 张金融表`}>
+      <SectionShell
+        title="金融专项监控"
+        description="直接展示公司金融指标、LPR、货币供应、社融信贷、保险收入和年报抽取的金融经营披露。"
+        meta={`${specialMetrics.length + productionMetrics.length} 个金融指标`}
+      >
         <div className="industry-monitor-grid">
           {specialMetrics.slice(0, 9).map((metric) => (
             <MetricCard key={metric.id} metric={metric} />
           ))}
-          {!specialMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
         </div>
+        {productionMetrics.length ? (
+          <div className="industry-extracted-grid">
+            {productionMetrics.slice(0, 6).map((metric) => (
+              <article key={metric.id} className="industry-extracted-card">
+                <div className="industry-monitor-eyebrow">{metric.title}</div>
+                <div className="industry-monitor-value">
+                  {formatNumber(metric.value, 2)}
+                  {metric.unit ? <small>{metric.unit}</small> : null}
+                </div>
+                {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+              </article>
+            ))}
+          </div>
+        ) : null}
+        {!specialMetrics.length && !productionMetrics.length ? <div className="subtle">暂无金融专项指标。</div> : null}
       </SectionShell>
     );
   }
