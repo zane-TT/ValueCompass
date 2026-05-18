@@ -3812,6 +3812,7 @@ def is_supplementary_item(item_name: str) -> bool:
     normalized_name = (item_name or "").strip()
     return (
         not normalized_name
+        or normalized_name.startswith("其中")
         or "其他" in normalized_name
         or "补充" in normalized_name
         or "抵销" in normalized_name
@@ -3823,6 +3824,8 @@ GENERIC_BUSINESS_BUCKET_NAMES = {
     "销售",
     "商品销售",
     "产品销售",
+    "营销板块",
+    "营销业务",
     "主营业务",
     "主营业",
     "合计",
