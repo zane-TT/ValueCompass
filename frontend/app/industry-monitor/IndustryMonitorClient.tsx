@@ -443,12 +443,16 @@ function collectCommoditySeries(modulePayload?: IndustryModulePayload | null, me
   }));
 }
 
+function isFreightMetric(metric: MonitorMetric) {
+  return metric.groupTitle === GROUP_LABELS.freightIndices || metric.groupTitle === "freightIndices";
+}
+
 function isIndustryOverviewMetric(moduleKey: string, metric: MonitorMetric) {
   if (moduleKey === "nonferrous_chemical") {
     return metric.groupTitle === GROUP_LABELS.energyCostIndicators || !metric.groupTitle;
   }
   if (moduleKey === "shipping") {
-    return metric.groupTitle === "freightIndices" || !metric.groupTitle;
+    return isFreightMetric(metric) || !metric.groupTitle;
   }
   return !metric.groupTitle;
 }
@@ -633,7 +637,7 @@ function IndustrySpecificPanel({
   extractedMetrics: ExtractedMetric[];
 }) {
   const title = MODULE_LABELS[query.industries] || "行业专项";
-  const nonCommonMetrics = metrics.filter((metric) => !metric.groupTitle || metric.groupTitle === "freightIndices");
+  const nonCommonMetrics = metrics.filter((metric) => !metric.groupTitle || isFreightMetric(metric));
   const commodityQuotes = collectCommodityQuotes(modulePayload);
   const commoditySeries = collectCommoditySeries(modulePayload);
   const fuelQuotes = collectCommodityQuotes(modulePayload, "fuelPrices");
@@ -705,7 +709,7 @@ function IndustrySpecificPanel({
   }
 
   if (query.industries === "shipping") {
-    const freightMetrics = metrics.filter((metric) => metric.groupTitle === "freightIndices");
+    const freightMetrics = metrics.filter(isFreightMetric);
     return (
       <SectionShell title="航运专项监控" description="直接展示运价指数、燃油价格和年报里的箱量/吞吐量披露。" meta={`${freightMetrics.length} 个运价指标`}>
         <div className="industry-subsection-title">
