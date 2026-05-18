@@ -116,7 +116,6 @@ type CommoditySeries = {
 };
 
 const INDUSTRY_CHOICES: IndustryChoice[] = [
-  { industries: "auto", stock: "600519", years: "8", label: "自动识别", focus: "按公司主营自动匹配行业变量" },
   { industries: "baijiu", stock: "600519", years: "8", label: "白酒", focus: "批价、渠道、产销、库存" },
   { industries: "nonferrous_chemical", stock: "601600", years: "8", label: "有色/化工", focus: "商品价格、能源成本、产销披露" },
   { industries: "shipping", stock: "601919", years: "8", label: "航运", focus: "运价指数、燃油、吞吐量" },
@@ -200,12 +199,14 @@ const VALUE_PRIORITY = [
 ];
 
 function readQueryState(): QueryState {
-  if (typeof window === "undefined") return { stock: "600519", years: "8", industries: "auto" };
+  if (typeof window === "undefined") return { stock: "600519", years: "8", industries: "baijiu" };
   const params = new URLSearchParams(window.location.search);
+  const industries = params.get("industries")?.trim() || "baijiu";
+  const matchedChoice = INDUSTRY_CHOICES.find((item) => item.industries === industries);
   return {
-    stock: params.get("stock")?.trim() || "600519",
-    years: params.get("years")?.trim() || "8",
-    industries: params.get("industries")?.trim() || "auto",
+    stock: params.get("stock")?.trim() || matchedChoice?.stock || "600519",
+    years: params.get("years")?.trim() || matchedChoice?.years || "8",
+    industries: matchedChoice?.industries || "baijiu",
   };
 }
 
@@ -440,6 +441,16 @@ function collectCommoditySeries(modulePayload?: IndustryModulePayload | null, me
     unit: item.unit,
     points: item.points,
   }));
+}
+
+function isIndustryOverviewMetric(moduleKey: string, metric: MonitorMetric) {
+  if (moduleKey === "nonferrous_chemical") {
+    return metric.groupTitle === GROUP_LABELS.energyCostIndicators || !metric.groupTitle;
+  }
+  if (moduleKey === "shipping") {
+    return metric.groupTitle === "freightIndices" || !metric.groupTitle;
+  }
+  return !metric.groupTitle;
 }
 
 function Sparkline({ points }: { points: MetricPoint[] }) {
@@ -831,11 +842,13 @@ export default function IndustryMonitorClient() {
   const monitorMetrics = useMemo(() => collectMonitorMetrics(industryData), [industryData]);
   const extractedMetrics = useMemo(() => collectExtractedMetrics(industryData), [industryData]);
   const activeModules = industryData?.industries ?? [];
-  const selectedModuleKey = query.industries === "auto" ? activeModules[0] || query.industries : query.industries;
+  const selectedModuleKey = query.industries;
   const selectedMonitorMetrics = monitorMetrics.filter((metric) => metric.moduleKey === selectedModuleKey);
-  const headlineMetrics = selectedMonitorMetrics.filter((metric) => metric.value !== null).slice(0, 9);
-  const detailMetrics = selectedMonitorMetrics.slice(0, 8);
-  const moduleText = activeModules.map((item) => MODULE_LABELS[item] || item).join("、") || "自动识别";
+  const headlineMetrics = selectedMonitorMetrics
+    .filter((metric) => metric.value !== null && isIndustryOverviewMetric(selectedModuleKey, metric))
+    .slice(0, 9);
+  const detailMetrics = selectedMonitorMetrics.filter((metric) => isIndustryOverviewMetric(selectedModuleKey, metric)).slice(0, 8);
+  const moduleText = MODULE_LABELS[selectedModuleKey] || activeModules.map((item) => MODULE_LABELS[item] || item).join("、") || "白酒";
 
   function syncUrl(nextQuery: QueryState) {
     const params = new URLSearchParams(nextQuery);
@@ -947,17 +960,13 @@ export default function IndustryMonitorClient() {
           ))}
         </div>
 
-        <div className="industry-monitor-grid">
-          {headlineMetrics.map((metric) => (
-            <MetricCard key={metric.id} metric={metric} />
-          ))}
-          {!headlineMetrics.length ? (
-            <div className="revenue-section-card revenue-section-card-wide">
-              <h4>暂无可展示数值</h4>
-              <div className="subtle">后端已返回数据时，会在这里展示最新值和趋势图。</div>
-            </div>
-          ) : null}
-        </div>
+        {headlineMetrics.length ? (
+          <div className="industry-monitor-grid">
+            {headlineMetrics.map((metric) => (
+              <MetricCard key={metric.id} metric={metric} />
+            ))}
+          </div>
+        ) : null}
       </SectionShell>
 
       <IndustrySpecificPanel
