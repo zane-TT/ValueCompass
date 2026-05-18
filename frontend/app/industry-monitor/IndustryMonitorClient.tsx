@@ -838,6 +838,24 @@ function IndustrySpecificPanel({
             <CommoditySeriesCard key={series.symbol} series={series} />
           ))}
         </div>
+
+        <div className="industry-subsection-title">
+          <h3>销量/单车经济披露</h3>
+          <span>从年报文本抽取销量、交付量、出口量、单车收入和单车毛利等指标</span>
+        </div>
+        <div className="industry-extracted-grid">
+          {productionMetrics.slice(0, 6).map((metric) => (
+            <article key={metric.id} className="industry-extracted-card">
+              <div className="industry-monitor-eyebrow">{metric.title}</div>
+              <div className="industry-monitor-value">
+                {formatNumber(metric.value, 2)}
+                {metric.unit ? <small>{metric.unit}</small> : null}
+              </div>
+              {metric.sourceText ? <p>{metric.sourceText}</p> : null}
+            </article>
+          ))}
+          {!productionMetrics.length ? <div className="subtle">暂无销量或单车经济披露。</div> : null}
+        </div>
       </SectionShell>
     );
   }
