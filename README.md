@@ -22,8 +22,6 @@
   <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
-![ValueCompass company analysis dashboard](docs/screenshots/company-analysis.png)
-
 ValueCompass is an open-source visual research dashboard for China A-share companies. It helps investors and builders quickly judge company quality, valuation, and profit drivers from public financial data.
 
 At its core, ValueCompass helps answer one question faster:

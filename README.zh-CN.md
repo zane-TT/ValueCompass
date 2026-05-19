@@ -22,8 +22,6 @@
   <a href="./README.md">English</a>
 </p>
 
-![ValueCompass 个股分析仪表盘](docs/screenshots/company-analysis.png)
-
 ValueCompass 是一个面向 A 股公司的开源可视化研究仪表盘，用公开财务数据帮助用户快速判断公司质量、估值位置和利润驱动因素。
 
 它的核心目标，是更快回答一个问题：
