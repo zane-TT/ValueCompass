@@ -2033,6 +2033,7 @@ button {
   gap: 10px;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .dataroma-command button,
@@ -2049,6 +2050,30 @@ button {
   font-weight: 950;
   box-shadow: var(--shadow-small);
   cursor: pointer;
+}
+
+.locale-switch {
+  display: inline-flex;
+  border: 2px solid var(--line);
+  background: #fffdf7;
+  box-shadow: var(--shadow-small);
+}
+
+.locale-switch button {
+  min-height: 38px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.locale-switch button + button {
+  border-left: 2px solid var(--line);
+}
+
+.locale-switch button.active {
+  background: #ccff00;
 }
 
 .dataroma-command button:disabled {
