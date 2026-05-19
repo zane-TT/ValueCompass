@@ -56,7 +56,7 @@ type SystemStatusProps = {
 };
 
 type AppShellProps = {
-  active: "stocks" | "markets" | "industry";
+  active: "stocks" | "markets" | "industry" | "superinvestors";
   children: ReactNode;
 };
 
@@ -83,6 +83,14 @@ const NAV_ITEMS = [
     label: "行业监控",
     eyebrow: "利润驱动",
     initials: "ID",
+    enabled: true,
+  },
+  {
+    id: "superinvestors",
+    href: "/superinvestors",
+    label: "超级投资者",
+    eyebrow: "DATAROMA 13F",
+    initials: "SI",
     enabled: true,
   },
   {

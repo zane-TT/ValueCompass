@@ -35,6 +35,7 @@ try:
         temporary_disable_proxy_env,
     )
     from .integrations.cninfo import get_latest_report_text_payload_v2
+    from .integrations.dataroma import build_dataroma_overview_payload
     from .core.config import (
         BASE_DIR,
         YI,
@@ -67,6 +68,7 @@ except ImportError:
         temporary_disable_proxy_env,
     )
     from integrations.cninfo import get_latest_report_text_payload_v2
+    from integrations.dataroma import build_dataroma_overview_payload
     from core.config import (
         BASE_DIR,
         YI,
@@ -5131,6 +5133,31 @@ def api_market_index_valuation(index: str = "sp500", years: str = "5", refresh: 
         print(f"[ERROR] {exc}")
         return JSONResponse(
             {"error": str(exc), "index": index, "years": years},
+            status_code=400,
+        )
+
+
+@app.get("/api/dataroma/overview")
+def api_dataroma_overview(refresh: str = ""):
+    try:
+        return get_cached_payload_or_build(
+            "dataroma_overview_v1",
+            "home",
+            builder=build_dataroma_overview_payload,
+            refresh=refresh == "1",
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        cached_payload = load_cached_payload("dataroma_overview_v1", "home")
+        if cached_payload is not None:
+            cached_payload["status"] = "stale_cache"
+            cached_payload["warning"] = str(exc)
+            return cached_payload
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "source": "DATAROMA",
+            },
             status_code=400,
         )
 

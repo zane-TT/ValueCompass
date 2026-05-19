@@ -1983,6 +1983,277 @@ button {
   display: contents;
 }
 
+.dataroma-hero,
+.dataroma-panel,
+.dataroma-status-row article,
+.dataroma-disclaimer {
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hard);
+}
+
+.dataroma-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: start;
+  background: var(--paper);
+  padding: 22px;
+}
+
+.eyebrow-label {
+  display: inline-flex;
+  margin-bottom: 10px;
+  border: 2px solid var(--line);
+  background: #ccff00;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.dataroma-hero h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(36px, 5vw, 72px);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.dataroma-hero p {
+  max-width: 760px;
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.dataroma-command {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.dataroma-command button,
+.dataroma-command a {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--line);
+  background: #101820;
+  color: #fff;
+  padding: 0 14px;
+  text-decoration: none;
+  font-weight: 950;
+  box-shadow: var(--shadow-small);
+  cursor: pointer;
+}
+
+.dataroma-command button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.dataroma-status-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dataroma-status-row article {
+  background: var(--paper);
+  padding: 14px;
+}
+
+.dataroma-status-row span,
+.dataroma-status-row strong {
+  display: block;
+}
+
+.dataroma-status-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dataroma-status-row strong {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.dataroma-panel {
+  background: var(--paper);
+  padding: 18px;
+}
+
+.dataroma-panel-header {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 2px solid var(--soft-line);
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+}
+
+.dataroma-panel-header h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.dataroma-panel-header span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.investor-update-grid,
+.stock-chip-grid,
+.insider-buy-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dataroma-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.investor-update-card,
+.stock-chip,
+.insider-buy-card {
+  min-width: 0;
+  border: 2px solid var(--soft-line);
+  background: #fffdf7;
+  padding: 12px;
+}
+
+.investor-update-card {
+  color: inherit;
+  text-decoration: none;
+}
+
+.investor-update-card strong,
+.investor-update-card span,
+.investor-update-card em,
+.stock-chip strong,
+.stock-chip span,
+.insider-buy-card span,
+.insider-buy-card strong,
+.insider-buy-card em {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.investor-update-card strong,
+.stock-chip strong,
+.insider-buy-card strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.investor-update-card span,
+.stock-chip span,
+.insider-buy-card em {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.investor-update-card em,
+.insider-buy-card span {
+  margin-top: 8px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.big-bet-table {
+  display: grid;
+  gap: 8px;
+}
+
+.table-head,
+.table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(120px, 0.4fr) minmax(90px, 0.3fr);
+  gap: 10px;
+  align-items: center;
+  border: 2px solid var(--soft-line);
+  padding: 10px 12px;
+}
+
+.table-head {
+  background: #101820;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.table-row {
+  background: #fffdf7;
+}
+
+.table-row strong,
+.table-row em {
+  display: block;
+}
+
+.table-row em {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+}
+
+.insider-buy-card div {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.insider-buy-card b {
+  font-size: 17px;
+}
+
+.insider-buy-card small {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.dataroma-disclaimer {
+  background: var(--warning-bg);
+  padding: 14px 16px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.empty-state {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 212px minmax(0, 1fr);
@@ -2015,6 +2286,7 @@ button {
   }
 
   .auto-strip,
+  .dataroma-status-row,
   .industry-overview-grid,
   .industry-data-grid,
   .industry-choice-grid,
@@ -2097,6 +2369,21 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .dataroma-hero,
+  .dataroma-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dataroma-command {
+    justify-content: flex-start;
+  }
+
+  .investor-update-grid,
+  .stock-chip-grid,
+  .insider-buy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .chart-box {
     height: 340px;
   }
@@ -2149,6 +2436,10 @@ button {
 
   .query-console,
   .auto-strip,
+  .dataroma-status-row,
+  .investor-update-grid,
+  .stock-chip-grid,
+  .insider-buy-grid,
   .industry-overview-grid,
   .industry-data-grid,
   .industry-choice-grid,
@@ -2194,5 +2485,16 @@ button {
 
   .revenue-row-side {
     text-align: left;
+  }
+
+  .dataroma-hero,
+  .dataroma-panel,
+  .dataroma-disclaimer {
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+
+  .table-head,
+  .table-row {
+    grid-template-columns: 1fr;
   }
 }
