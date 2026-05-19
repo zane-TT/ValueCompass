@@ -78,6 +78,29 @@ def parse_number(value: str) -> float | None:
         return None
 
 
+def parse_int(value: str) -> int | None:
+    number = parse_number(value)
+    return int(number) if number is not None else None
+
+
+def parse_money(value: str) -> float | None:
+    return parse_number(value)
+
+
+def normalize_manager_code(value: str) -> str:
+    code = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,24}", code):
+        raise ValueError("Invalid DATAROMA manager code")
+    return code
+
+
+def manager_url(manager_code: str, page: str = "holdings") -> str:
+    normalized_code = normalize_manager_code(manager_code)
+    if page == "activity":
+        return f"{DATAROMA_BASE_URL}/m/m_activity.php?m={normalized_code}&typ=a"
+    return f"{DATAROMA_BASE_URL}/m/holdings.php?m={normalized_code}"
+
+
 def is_date_token(value: str) -> bool:
     return value == "Today" or bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]{2}", value))
 
@@ -137,6 +160,177 @@ def build_superinvestor_updates(links: list[dict[str, str]], limit: int = 24) ->
             }
         )
     return updates[:limit]
+
+
+def parse_manager_heading(value: str) -> dict[str, str | None]:
+    manager, firm = split_manager_name(value)
+    return {"manager": manager, "firm": firm}
+
+
+def parse_recent_activity(value: str) -> dict[str, Any]:
+    if value == "Buy":
+        return {"type": "buy", "label": "Buy", "percent": None}
+    match = re.match(r"(Add|Reduce|Sell)\s+(-?[\d,.]+)%", value)
+    if not match:
+        return {"type": "hold", "label": "", "percent": None}
+    action, percent = match.groups()
+    return {"type": action.lower(), "label": value, "percent": parse_number(percent)}
+
+
+def is_activity_token(value: str) -> bool:
+    return value == "Buy" or bool(re.match(r"(Add|Reduce|Sell)\s+(-?[\d,.]+)%", value))
+
+
+def build_holdings(tokens: list[str]) -> list[dict[str, Any]]:
+    holdings: list[dict[str, Any]] = []
+    index = find_token_index(tokens, "≡")
+    while index is not None and index + 8 < len(tokens):
+        if tokens[index] != "≡":
+            break
+        ticker = tokens[index + 1].strip()
+        company = tokens[index + 2].lstrip("-").strip()
+        portfolio_percent = parse_number(tokens[index + 3])
+        if not ticker or portfolio_percent is None or not company:
+            next_index = find_token_index(tokens[index + 1 :], "≡")
+            if next_index is None:
+                break
+            index = index + 1 + next_index
+            continue
+
+        value_index = index + 4
+        recent_activity = parse_recent_activity("")
+        if value_index < len(tokens) and is_activity_token(tokens[value_index]):
+            recent_activity = parse_recent_activity(tokens[value_index])
+            value_index += 1
+
+        if value_index + 6 >= len(tokens):
+            break
+
+        holding = {
+            "ticker": ticker,
+            "name": company,
+            "portfolioPercent": portfolio_percent,
+            "recentActivity": recent_activity,
+            "shares": parse_int(tokens[value_index]),
+            "reportedPrice": parse_money(tokens[value_index + 1]),
+            "value": parse_money(tokens[value_index + 2]),
+            "currentPrice": parse_money(tokens[value_index + 3]),
+            "reportedPriceChangePercent": parse_number(tokens[value_index + 4]),
+            "week52Low": parse_money(tokens[value_index + 5]),
+            "week52High": parse_money(tokens[value_index + 6]),
+        }
+        holdings.append(holding)
+
+        next_index = find_token_index(tokens[value_index + 7 :], "≡")
+        if next_index is None:
+            break
+        index = value_index + 7 + next_index
+    return holdings
+
+
+def build_activity_by_quarter(tokens: list[str], max_quarters: int = 4) -> list[dict[str, Any]]:
+    quarters: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    index = 0
+    while index < len(tokens):
+        if re.fullmatch(r"Q[1-4]", tokens[index]) and index + 1 < len(tokens) and re.fullmatch(r"\d{4}", tokens[index + 1]):
+            if current is not None:
+                quarters.append(current)
+                if len(quarters) >= max_quarters:
+                    break
+            current = {"quarter": f"{tokens[index]} {tokens[index + 1]}", "items": []}
+            index += 2
+            continue
+
+        if current is not None and tokens[index] == "≡" and index + 5 < len(tokens):
+            ticker = tokens[index + 1].strip()
+            name = tokens[index + 2].lstrip("-").strip()
+            activity = tokens[index + 3]
+            if is_activity_token(activity):
+                current["items"].append(
+                    {
+                        "ticker": ticker,
+                        "name": name,
+                        "activity": parse_recent_activity(activity),
+                        "shareChange": parse_int(tokens[index + 4]),
+                        "portfolioImpactPercent": parse_number(tokens[index + 5]),
+                    }
+                )
+                index += 6
+                continue
+        index += 1
+
+    if current is not None and len(quarters) < max_quarters:
+        quarters.append(current)
+    return quarters
+
+
+def summarize_activity(items: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {"buy": 0, "add": 0, "reduce": 0, "sell": 0}
+    for item in items:
+        action_type = item.get("activity", {}).get("type")
+        if action_type in summary:
+            summary[action_type] += 1
+    return summary
+
+
+def build_concentration(holdings: list[dict[str, Any]]) -> dict[str, float | int | None]:
+    weights = [item["portfolioPercent"] for item in holdings if isinstance(item.get("portfolioPercent"), (int, float))]
+    return {
+        "top1Percent": round(sum(weights[:1]), 2) if weights else None,
+        "top5Percent": round(sum(weights[:5]), 2) if weights else None,
+        "top10Percent": round(sum(weights[:10]), 2) if weights else None,
+        "holdingCount": len(holdings),
+    }
+
+
+def build_dataroma_manager_payload(manager_code: str) -> dict[str, Any]:
+    code = normalize_manager_code(manager_code)
+    holdings_url = manager_url(code)
+    activity_url = manager_url(code, "activity")
+
+    holdings_parser = DataromaHtmlParser()
+    holdings_parser.feed(fetch_dataroma_html(holdings_url))
+    holdings_tokens = holdings_parser.tokens
+
+    activity_parser = DataromaHtmlParser()
+    activity_parser.feed(fetch_dataroma_html(activity_url))
+    activity_tokens = activity_parser.tokens
+
+    heading_index = 15 if len(holdings_tokens) > 15 else None
+    heading = parse_manager_heading(holdings_tokens[heading_index]) if heading_index is not None else {"manager": code, "firm": None}
+    holdings = build_holdings(holdings_tokens)
+    activity_by_quarter = build_activity_by_quarter(activity_tokens)
+    latest_activity = activity_by_quarter[0] if activity_by_quarter else {"quarter": None, "items": []}
+
+    portfolio_date_index = find_token_index(holdings_tokens, "Portfolio date:")
+    stock_count_index = find_token_index(holdings_tokens, "No. of stocks:")
+    portfolio_value_index = find_token_index(holdings_tokens, "Portfolio value:")
+    period_index = find_token_index(holdings_tokens, "Period:")
+
+    return {
+        "source": "DATAROMA",
+        "managerCode": code,
+        "manager": heading["manager"],
+        "firm": heading["firm"],
+        "sourceUrl": holdings_url,
+        "activityUrl": activity_url,
+        "fetchedAt": datetime.now(timezone.utc).isoformat(),
+        "period": holdings_tokens[period_index + 1] if period_index is not None and period_index + 1 < len(holdings_tokens) else None,
+        "portfolioDate": holdings_tokens[portfolio_date_index + 1] if portfolio_date_index is not None and portfolio_date_index + 1 < len(holdings_tokens) else None,
+        "reportedStockCount": parse_int(holdings_tokens[stock_count_index + 1]) if stock_count_index is not None and stock_count_index + 1 < len(holdings_tokens) else None,
+        "portfolioValue": parse_money(holdings_tokens[portfolio_value_index + 1]) if portfolio_value_index is not None and portfolio_value_index + 1 < len(holdings_tokens) else None,
+        "concentration": build_concentration(holdings),
+        "holdings": holdings,
+        "topHoldings": holdings[:10],
+        "activityByQuarter": activity_by_quarter,
+        "latestActivitySummary": summarize_activity(latest_activity["items"]),
+        "latestActivityItems": latest_activity["items"],
+        "notice": (
+            "This is a low-frequency summary of DATAROMA public pages with source links. "
+            "13F data is delayed and does not represent current trading activity."
+        ),
+    }
 
 
 def build_stock_list(tokens: list[str], start_marker: str, stop_markers: list[str], limit: int = 10) -> list[dict[str, str]]:

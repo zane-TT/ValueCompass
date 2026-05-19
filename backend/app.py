@@ -35,7 +35,7 @@ try:
         temporary_disable_proxy_env,
     )
     from .integrations.cninfo import get_latest_report_text_payload_v2
-    from .integrations.dataroma import build_dataroma_overview_payload
+    from .integrations.dataroma import build_dataroma_manager_payload, build_dataroma_overview_payload
     from .core.config import (
         BASE_DIR,
         YI,
@@ -68,7 +68,7 @@ except ImportError:
         temporary_disable_proxy_env,
     )
     from integrations.cninfo import get_latest_report_text_payload_v2
-    from integrations.dataroma import build_dataroma_overview_payload
+    from integrations.dataroma import build_dataroma_manager_payload, build_dataroma_overview_payload
     from core.config import (
         BASE_DIR,
         YI,
@@ -5157,6 +5157,33 @@ def api_dataroma_overview(refresh: str = ""):
             {
                 "error": str(exc),
                 "source": "DATAROMA",
+            },
+            status_code=400,
+        )
+
+
+@app.get("/api/dataroma/manager")
+def api_dataroma_manager(manager: str = "BRK", refresh: str = ""):
+    manager_code = manager.strip() or "BRK"
+    try:
+        return get_cached_payload_or_build(
+            "dataroma_manager_v1",
+            manager_code,
+            builder=lambda: build_dataroma_manager_payload(manager_code),
+            refresh=refresh == "1",
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        cached_payload = load_cached_payload("dataroma_manager_v1", manager_code)
+        if cached_payload is not None:
+            cached_payload["status"] = "stale_cache"
+            cached_payload["warning"] = str(exc)
+            return cached_payload
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "source": "DATAROMA",
+                "manager": manager_code,
             },
             status_code=400,
         )
