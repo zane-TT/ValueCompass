@@ -2147,6 +2147,7 @@ button {
 .investor-update-card strong,
 .investor-update-card span,
 .investor-update-card em,
+.investor-update-card small,
 .stock-chip strong,
 .stock-chip span,
 .insider-buy-card span,
@@ -2181,6 +2182,16 @@ button {
   font-size: 12px;
   font-style: normal;
   font-weight: 950;
+}
+
+.investor-update-card small {
+  margin-top: 10px;
+  border-top: 1px solid var(--soft-line);
+  padding-top: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
 }
 
 .big-bet-table {

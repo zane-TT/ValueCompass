@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { AppShell } from "../components";
 
 const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim();
@@ -176,11 +177,16 @@ export default function SuperinvestorsClient() {
         </div>
         <div className="investor-update-grid">
           {(data?.superinvestorUpdates ?? []).map((item) => (
-            <a key={`${item.code}-${item.manager}-${item.updatedAt}`} href={item.url} target="_blank" rel="noreferrer" className="investor-update-card">
+            <Link
+              key={`${item.code}-${item.manager}-${item.updatedAt}`}
+              href={item.code ? `/superinvestors/manager?code=${encodeURIComponent(item.code)}` : item.url}
+              className="investor-update-card"
+            >
               <strong>{item.manager}</strong>
               <span>{item.firm || "Independent"}</span>
               <em>{item.updatedAt}</em>
-            </a>
+              <small>View holdings</small>
+            </Link>
           ))}
         </div>
       </section>
