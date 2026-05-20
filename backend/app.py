@@ -5167,14 +5167,14 @@ def api_dataroma_manager(manager: str = "BRK", refresh: str = ""):
     manager_code = manager.strip() or "BRK"
     try:
         return get_cached_payload_or_build(
-            "dataroma_manager_v1",
+            "dataroma_manager_v2",
             manager_code,
             builder=lambda: build_dataroma_manager_payload(manager_code),
             refresh=refresh == "1",
         )
     except Exception as exc:
         print(f"[ERROR] {exc}")
-        cached_payload = load_cached_payload("dataroma_manager_v1", manager_code)
+        cached_payload = load_cached_payload("dataroma_manager_v2", manager_code)
         if cached_payload is not None:
             cached_payload["status"] = "stale_cache"
             cached_payload["warning"] = str(exc)

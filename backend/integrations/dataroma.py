@@ -265,6 +265,44 @@ def build_activity_by_quarter(tokens: list[str], max_quarters: int = 4) -> list[
     return quarters
 
 
+def build_activity_label(action_type: str, percent: float | None) -> str:
+    labels = {
+        "buy": "Buy",
+        "add": "Add",
+        "reduce": "Reduce",
+        "sell": "Sell",
+    }
+    label = labels.get(action_type)
+    if not label:
+        return ""
+    if percent is None:
+        return label
+    return f"{label} {percent:.2f}%"
+
+
+def apply_portfolio_activity_impacts(holdings: list[dict[str, Any]], activity_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    impacts_by_ticker = {
+        item["ticker"]: item
+        for item in activity_items
+        if item.get("ticker") and isinstance(item.get("portfolioImpactPercent"), (int, float))
+    }
+    for holding in holdings:
+        activity = holding.get("recentActivity")
+        if not isinstance(activity, dict) or activity.get("type") == "hold":
+            continue
+
+        impact_item = impacts_by_ticker.get(holding.get("ticker"))
+        if impact_item is None:
+            continue
+
+        portfolio_impact = impact_item["portfolioImpactPercent"]
+        activity["positionChangePercent"] = activity.get("percent")
+        activity["portfolioImpactPercent"] = portfolio_impact
+        activity["percent"] = portfolio_impact
+        activity["label"] = build_activity_label(str(activity.get("type")), portfolio_impact)
+    return holdings
+
+
 def summarize_activity(items: list[dict[str, Any]]) -> dict[str, int]:
     summary = {"buy": 0, "add": 0, "reduce": 0, "sell": 0}
     for item in items:
@@ -302,6 +340,7 @@ def build_dataroma_manager_payload(manager_code: str) -> dict[str, Any]:
     holdings = build_holdings(holdings_tokens)
     activity_by_quarter = build_activity_by_quarter(activity_tokens)
     latest_activity = activity_by_quarter[0] if activity_by_quarter else {"quarter": None, "items": []}
+    holdings = apply_portfolio_activity_impacts(holdings, latest_activity["items"])
 
     portfolio_date_index = find_token_index(holdings_tokens, "Portfolio date:")
     stock_count_index = find_token_index(holdings_tokens, "No. of stocks:")
