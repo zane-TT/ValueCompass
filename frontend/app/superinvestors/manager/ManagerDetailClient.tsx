@@ -15,6 +15,8 @@ type Activity = {
   type: ActivityType;
   label: string;
   percent?: number | null;
+  portfolioImpactPercent?: number | null;
+  positionChangePercent?: number | null;
 };
 
 type Holding = {
@@ -171,13 +173,29 @@ function actionTone(type?: ActivityType) {
 
 function translateActivity(activity: Activity, locale: Locale) {
   if (!activity.label) return COPY[locale].hold;
-  if (locale === "en") return activity.label;
-  const percent = activity.percent === undefined || activity.percent === null ? "" : ` ${formatNumber(activity.percent)}%`;
-  if (activity.type === "buy") return COPY.zh.buy;
+  const displayPercent = activity.portfolioImpactPercent ?? activity.percent;
+  const percent = displayPercent === undefined || displayPercent === null ? "" : ` ${formatNumber(displayPercent)}%`;
+  if (locale === "en") {
+    if (activity.type === "buy") return `${COPY.en.buy}${percent}`;
+    if (activity.type === "add") return `${COPY.en.add}${percent}`;
+    if (activity.type === "reduce") return `${COPY.en.reduce}${percent}`;
+    if (activity.type === "sell") return `${COPY.en.sell}${percent}`;
+    return COPY.en.hold;
+  }
+  if (activity.type === "buy") return `${COPY.zh.buy}${percent}`;
   if (activity.type === "add") return `${COPY.zh.add}${percent}`;
   if (activity.type === "reduce") return `${COPY.zh.reduce}${percent}`;
   if (activity.type === "sell") return `${COPY.zh.sell}${percent}`;
   return COPY.zh.hold;
+}
+
+function activityWithPortfolioImpact(item: ActivityItem) {
+  if (item.portfolioImpactPercent === undefined || item.portfolioImpactPercent === null) return item.activity;
+  return {
+    ...item.activity,
+    portfolioImpactPercent: item.portfolioImpactPercent,
+    label: item.activity.type === "buy" ? `Buy ${formatNumber(item.portfolioImpactPercent)}%` : item.activity.label,
+  };
 }
 
 function ActivityBadge({ activity, locale }: { activity: Activity; locale: Locale }) {
@@ -328,7 +346,7 @@ function ManagerDetailContent() {
                   <div key={`${type}-${item.ticker}`} className="activity-item-row">
                     <strong>{item.ticker}</strong>
                     <span>{item.name}</span>
-                    <em>{translateActivity(item.activity, locale)}</em>
+                    <em>{translateActivity(activityWithPortfolioImpact(item), locale)}</em>
                   </div>
                 ))
               ) : (
