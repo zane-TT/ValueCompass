@@ -486,7 +486,7 @@ BUFFETT_INDICATOR_CONFIG: dict[str, dict] = {
             "https://data.eastmoney.com/cjsj/gpjytj.html",
             "https://data.eastmoney.com/cjsj/gdp.html",
         ],
-        "sourceQuality": "中国内地口径使用上海与深圳市场总市值合计作为 A 股市值代理；当前公开历史源不含北交所长历史序列。",
+        "sourceQuality": "中国内地口径使用上海、深圳与北京证券交易所股票总市值合计；北交所历史通过当前上市股票逐只总市值历史汇总，因此序列从三所口径共同可比区间开始。",
     },
 }
 
@@ -3812,6 +3812,55 @@ def load_hk_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
     return cap_df.sort_values("date"), gdp_df.sort_values("date")
 
 
+def load_bse_market_cap_dataframe(refresh: bool = False) -> pd.DataFrame:
+    def fetch() -> pd.DataFrame:
+        print("[INFO] Fetching BSE listed stock list from AKShare")
+        stock_df = ak.stock_info_bj_name_code()
+        if stock_df is None or stock_df.empty or "证券代码" not in stock_df.columns:
+            return pd.DataFrame()
+
+        codes = [str(code).strip() for code in stock_df["证券代码"].dropna().tolist() if str(code).strip()]
+        monthly_frames: list[pd.DataFrame] = []
+
+        def fetch_one(code: str) -> pd.DataFrame:
+            try:
+                df = ak.stock_zh_valuation_baidu(symbol=code, indicator="总市值", period="全部")
+                if df is None or df.empty:
+                    return pd.DataFrame()
+                df = df.copy()
+                df["date"] = pd.to_datetime(df.get("date"), errors="coerce")
+                df["value"] = pd.to_numeric(df.get("value"), errors="coerce")
+                df = df.dropna(subset=["date", "value"])
+                df = df[df["value"] > 0]
+                if df.empty:
+                    return pd.DataFrame()
+                df["month"] = df["date"].dt.to_period("M")
+                return df.sort_values("date").groupby("month", as_index=False).tail(1)[["date", "value"]]
+            except Exception as exc:
+                print(f"[WARN] BSE stock market cap unavailable, code={code}: {exc}")
+                return pd.DataFrame()
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(fetch_one, code) for code in codes]
+            for future in as_completed(futures):
+                df = future.result()
+                if df is not None and not df.empty:
+                    monthly_frames.append(df)
+
+        if not monthly_frames:
+            return pd.DataFrame()
+        combined_df = pd.concat(monthly_frames, ignore_index=True)
+        combined_df["month"] = combined_df["date"].dt.to_period("M")
+        result_df = combined_df.groupby("month", as_index=False).agg(marketCap=("value", "sum"), date=("date", "max"))
+        result_df = result_df[result_df["date"].dt.date >= datetime(2021, 11, 15).date()]
+        result_df["marketCapQuality"] = "reported"
+        result_df["marketCapProxy"] = ""
+        return result_df[["date", "marketCap", "marketCapQuality", "marketCapProxy"]].sort_values("date")
+
+    df = get_ak_dataframe_cached(("bse_market_cap_monthly",), fetch, refresh=refresh)
+    return df if df is not None else pd.DataFrame()
+
+
 def load_cn_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     def fetch_cap() -> pd.DataFrame:
         print("[INFO] Fetching China stock market capitalization from AKShare")
@@ -3832,10 +3881,17 @@ def load_cn_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
         market_cap = finite_float(row.get("市价总值-上海")) + finite_float(row.get("市价总值-深圳"))
         if date and market_cap > 0:
             cap_rows.append({"date": date, "marketCap": market_cap})
-    cap_points_df = pd.DataFrame(cap_rows).sort_values("date")
-    if not cap_points_df.empty:
-        cap_points_df["marketCapQuality"] = "reported"
-        cap_points_df["marketCapProxy"] = ""
+    shsz_cap_df = pd.DataFrame(cap_rows).sort_values("date")
+    bse_cap_df = load_bse_market_cap_dataframe(refresh=refresh)
+    if shsz_cap_df.empty or bse_cap_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    shsz_cap_df["month"] = shsz_cap_df["date"].dt.to_period("M")
+    bse_cap_df["month"] = bse_cap_df["date"].dt.to_period("M")
+    cap_points_df = pd.merge(shsz_cap_df, bse_cap_df[["month", "marketCap"]], on="month", how="inner", suffixes=("", "Bse"))
+    cap_points_df["marketCap"] = cap_points_df["marketCap"] + cap_points_df["marketCapBse"]
+    cap_points_df = cap_points_df[["date", "marketCap"]].sort_values("date")
+    cap_points_df["marketCapQuality"] = "reported"
+    cap_points_df["marketCapProxy"] = ""
 
     cumulative_rows: list[dict] = []
     for row in gdp_df.to_dict(orient="records"):
