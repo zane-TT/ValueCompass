@@ -3689,9 +3689,36 @@ def load_us_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
     if market_cap_df.empty or gdp_df.empty:
         return pd.DataFrame(), pd.DataFrame()
     market_cap_df = market_cap_df.rename(columns={"value": "marketCap"})
+    market_cap_df["marketCapQuality"] = "official"
+    market_cap_df["marketCapProxy"] = ""
     gdp_df = gdp_df.rename(columns={"value": "gdp"})
     # NCBEILQ027S is in millions of dollars; GDP is in billions of dollars.
     gdp_df["gdp"] = gdp_df["gdp"] * 1000
+    try:
+        proxy_df = fred_csv_dataframe("SP500", refresh=refresh)
+        if not proxy_df.empty:
+            last_cap = market_cap_df.sort_values("date").iloc[-1]
+            base_proxy = proxy_df[proxy_df["date"] <= last_cap.date].sort_values("date").tail(1)
+            latest_proxy = proxy_df.sort_values("date").tail(1)
+            if not base_proxy.empty and not latest_proxy.empty:
+                base_value = finite_float(base_proxy.iloc[0].value)
+                latest_value = finite_float(latest_proxy.iloc[0].value)
+                latest_date = latest_proxy.iloc[0].date
+                if latest_date > last_cap.date and base_value > 0 and latest_value > 0:
+                    estimated_market_cap = float(last_cap.marketCap) * latest_value / base_value
+                    estimate_row = pd.DataFrame(
+                        [
+                            {
+                                "date": latest_date,
+                                "marketCap": estimated_market_cap,
+                                "marketCapQuality": "estimated",
+                                "marketCapProxy": "FRED SP500",
+                            }
+                        ]
+                    )
+                    market_cap_df = pd.concat([market_cap_df, estimate_row], ignore_index=True)
+    except Exception as exc:
+        print(f"[WARN] US latest market cap estimate unavailable: {exc}")
     return market_cap_df, gdp_df
 
 
@@ -3725,6 +3752,8 @@ def load_hk_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
     cap_df["date"] = pd.to_datetime(cap_period.str.replace("-00", "-12", regex=False) + "-01", errors="coerce")
     cap_df["marketCap"] = pd.to_numeric(cap_df.get("eq_mkt_ttl_stock_cap"), errors="coerce")
     cap_df = cap_df.dropna(subset=["date", "marketCap"])[["date", "marketCap"]]
+    cap_df["marketCapQuality"] = "reported"
+    cap_df["marketCapProxy"] = ""
 
     econ_df = econ_df.copy()
     econ_period = econ_df["end_of_month"].astype(str)
@@ -3764,6 +3793,9 @@ def load_cn_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
         if date and market_cap > 0:
             cap_rows.append({"date": date, "marketCap": market_cap})
     cap_points_df = pd.DataFrame(cap_rows).sort_values("date")
+    if not cap_points_df.empty:
+        cap_points_df["marketCapQuality"] = "reported"
+        cap_points_df["marketCapProxy"] = ""
 
     cumulative_rows: list[dict] = []
     for row in gdp_df.to_dict(orient="records"):
@@ -3824,6 +3856,10 @@ def build_buffett_indicator_payload(market: str = "us", years: int = 10, refresh
     percentile = percentile_rank(values, current_ratio)
     actual_years = max(0.1, round((filtered.iloc[-1].date.date() - filtered.iloc[0].date.date()).days / 365.25, 1))
     notes = ["巴菲特指数 = 股票市场总市值 / 名义 GDP。", config["sourceQuality"]]
+    market_cap_quality = str(current.get("marketCapQuality") or "")
+    market_cap_proxy = str(current.get("marketCapProxy") or "")
+    if market_cap_quality == "estimated":
+        notes.append(f"当前总市值为估算值：以上一期官方总市值为锚点，并用 {market_cap_proxy or '宽基指数'} 的最新收盘价滚动更新。")
     if actual_years < years * 0.7:
         notes.append(f"当前可用历史约 {actual_years} 年，少于所选 {years} 年区间，历史分位仅代表可取样本。")
 
@@ -3834,7 +3870,7 @@ def build_buffett_indicator_payload(market: str = "us", years: int = 10, refresh
         "status": "ok" if actual_years >= years * 0.7 else "limited_history",
         "currency": config["currency"],
         "sourceLabel": config["sourceLabel"],
-        "dataQuality": {"marketCap": "available", "gdp": "available", "notes": notes},
+        "dataQuality": {"marketCap": market_cap_quality or "available", "gdp": "available", "notes": notes},
         "summary": {
             "currentDate": current.date.date().isoformat(),
             "currentRatio": round(current_ratio, 2),

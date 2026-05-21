@@ -102,6 +102,9 @@ function getValuationZoneTone(zone?: ValuationZone) {
 
 function getDataQualityLabel(value?: string) {
   if (value === "available") return "已连接";
+  if (value === "official") return "官方季度";
+  if (value === "reported") return "已披露";
+  if (value === "estimated") return "最新估算";
   if (value === "not_used") return "本页未使用";
   if (value === "not_connected") return "未连接";
   return value || "-";
