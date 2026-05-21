@@ -108,6 +108,7 @@ function getDataQualityLabel(value?: string) {
 }
 
 export default function MarketValuationClient() {
+  const [activeValuationType, setActiveValuationType] = useState<"index" | "buffett">("index");
   const [marketIndexCode, setMarketIndexCode] = useState("sp500");
   const [marketIndexYears, setMarketIndexYears] = useState("5");
   const [marketIndexData, setMarketIndexData] = useState<MarketIndexValuationResponse | null>(null);
@@ -231,7 +232,6 @@ export default function MarketValuationClient() {
 
   useEffect(() => {
     void loadMarketIndexData("sp500", "5");
-    void loadBuffettData("us", "5");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -498,6 +498,15 @@ export default function MarketValuationClient() {
     });
   }, [buffettData]);
 
+  const isBuffettActive = activeValuationType === "buffett";
+  const activeYears = isBuffettActive ? buffettYears : marketIndexYears;
+  const isActiveLoading = isBuffettActive ? isBuffettLoading : isMarketIndexLoading;
+  const activeError = isBuffettActive ? buffettError : marketIndexError;
+  const activeStatus = isBuffettActive ? buffettStatus : marketIndexStatus;
+  const activeConclusion = isBuffettActive
+    ? buffettData?.conclusion || "用股票市场总市值与名义 GDP 的比例，观察美国、香港和中国内地市场的宏观估值温度。"
+    : marketIndexData?.conclusion || "查看标普500、纳斯达克100等指数当前 PE 与历史区间的位置。";
+
   return (
     <AppShell active="markets">
       <section className="market-valuation-section market-valuation-page" aria-label="大盘估值">
@@ -505,35 +514,55 @@ export default function MarketValuationClient() {
           <div>
             <div className="summary-kicker">Market Valuation</div>
             <h1>大盘估值仪表盘</h1>
-            <p>{marketIndexData?.conclusion || "查看标普500、纳斯达克100等指数当前 PE 与历史区间的位置。"}</p>
+            <p>{activeConclusion}</p>
           </div>
           <div className="market-index-controls">
             {[
-              { code: "sp500", label: "标普500" },
-              { code: "nasdaq100", label: "纳斯达克100" },
-              { code: "csi300", label: "沪深300" },
-              { code: "csi500", label: "中证500" },
-              { code: "dividend_low_vol_100", label: "红利低波100" },
+              { type: "index", code: "sp500", label: "标普500" },
+              { type: "index", code: "nasdaq100", label: "纳斯达克100" },
+              { type: "index", code: "csi300", label: "沪深300" },
+              { type: "index", code: "csi500", label: "中证500" },
+              { type: "index", code: "dividend_low_vol_100", label: "红利低波100" },
+              { type: "buffett", code: "us", label: "美国巴菲特" },
+              { type: "buffett", code: "hk", label: "香港巴菲特" },
+              { type: "buffett", code: "cn", label: "中国巴菲特" },
             ].map((item) => (
               <button
-                key={item.code}
+                key={`${item.type}-${item.code}`}
                 type="button"
-                className={`market-index-button ${marketIndexCode === item.code ? "active" : ""}`}
-                disabled={isMarketIndexLoading}
+                className={`market-index-button ${
+                  (item.type === "index" && !isBuffettActive && marketIndexCode === item.code) ||
+                  (item.type === "buffett" && isBuffettActive && buffettMarketCode === item.code)
+                    ? "active"
+                    : ""
+                }`}
+                disabled={isActiveLoading}
                 onClick={() => {
-                  setMarketIndexCode(item.code);
-                  void loadMarketIndexData(item.code, marketIndexYears);
+                  if (item.type === "buffett") {
+                    setActiveValuationType("buffett");
+                    setBuffettMarketCode(item.code);
+                    void loadBuffettData(item.code, buffettYears);
+                  } else {
+                    setActiveValuationType("index");
+                    setMarketIndexCode(item.code);
+                    void loadMarketIndexData(item.code, marketIndexYears);
+                  }
                 }}
               >
                 {item.label}
               </button>
             ))}
             <select
-              value={marketIndexYears}
-              disabled={isMarketIndexLoading}
+              value={activeYears}
+              disabled={isActiveLoading}
               onChange={(event) => {
-                setMarketIndexYears(event.target.value);
-                void loadMarketIndexData(marketIndexCode, event.target.value);
+                if (isBuffettActive) {
+                  setBuffettYears(event.target.value);
+                  void loadBuffettData(buffettMarketCode, event.target.value);
+                } else {
+                  setMarketIndexYears(event.target.value);
+                  void loadMarketIndexData(marketIndexCode, event.target.value);
+                }
               }}
             >
               <option value="5">5Y</option>
@@ -544,17 +573,23 @@ export default function MarketValuationClient() {
             <button
               type="button"
               className="market-index-button"
-              disabled={isMarketIndexLoading}
-              onClick={() => void loadMarketIndexData(marketIndexCode, marketIndexYears, true)}
+              disabled={isActiveLoading}
+              onClick={() => {
+                if (isBuffettActive) {
+                  void loadBuffettData(buffettMarketCode, buffettYears, true);
+                } else {
+                  void loadMarketIndexData(marketIndexCode, marketIndexYears, true);
+                }
+              }}
             >
-              {isMarketIndexLoading ? "加载中" : "刷新"}
+              {isActiveLoading ? "加载中" : "刷新"}
             </button>
           </div>
         </div>
 
-        {marketIndexError ? <div className="error-box">大盘估值加载失败：{marketIndexError}</div> : null}
+        {activeError ? <div className="error-box">大盘估值加载失败：{activeError}</div> : null}
 
-        {marketIndexData ? (
+        {!isBuffettActive && marketIndexData ? (
           <>
             <div className="market-valuation-grid">
               <div className="market-kpi-card">
@@ -625,64 +660,7 @@ export default function MarketValuationClient() {
               </div>
             </div>
           </>
-        ) : (
-          <div className="market-empty-state">{marketIndexStatus}</div>
-        )}
-      </section>
-
-      <section className="market-valuation-section market-valuation-page" aria-label="巴菲特指数">
-        <div className="market-valuation-header">
-          <div>
-            <div className="summary-kicker">Buffett Indicator</div>
-            <h2>巴菲特指数</h2>
-            <p>{buffettData?.conclusion || "用股票市场总市值与名义 GDP 的比例，观察美国、香港和中国内地市场的宏观估值温度。"}</p>
-          </div>
-          <div className="market-index-controls">
-            {[
-              { code: "us", label: "美国" },
-              { code: "hk", label: "香港" },
-              { code: "cn", label: "中国内地" },
-            ].map((item) => (
-              <button
-                key={item.code}
-                type="button"
-                className={`market-index-button ${buffettMarketCode === item.code ? "active" : ""}`}
-                disabled={isBuffettLoading}
-                onClick={() => {
-                  setBuffettMarketCode(item.code);
-                  void loadBuffettData(item.code, buffettYears);
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-            <select
-              value={buffettYears}
-              disabled={isBuffettLoading}
-              onChange={(event) => {
-                setBuffettYears(event.target.value);
-                void loadBuffettData(buffettMarketCode, event.target.value);
-              }}
-            >
-              <option value="5">5Y</option>
-              <option value="10">10Y</option>
-              <option value="20">20Y</option>
-              <option value="50">Max</option>
-            </select>
-            <button
-              type="button"
-              className="market-index-button"
-              disabled={isBuffettLoading}
-              onClick={() => void loadBuffettData(buffettMarketCode, buffettYears, true)}
-            >
-              {isBuffettLoading ? "加载中" : "刷新"}
-            </button>
-          </div>
-        </div>
-
-        {buffettError ? <div className="error-box">巴菲特指数加载失败：{buffettError}</div> : null}
-
-        {buffettData ? (
+        ) : isBuffettActive && buffettData ? (
           <>
             <div className="market-valuation-grid">
               <div className="market-kpi-card">
@@ -747,7 +725,7 @@ export default function MarketValuationClient() {
             </div>
           </>
         ) : (
-          <div className="market-empty-state">{buffettStatus}</div>
+          <div className="market-empty-state">{activeStatus}</div>
         )}
       </section>
     </AppShell>
