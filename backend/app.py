@@ -3683,6 +3683,46 @@ def fred_csv_dataframe(series_id: str, refresh: bool = False) -> pd.DataFrame:
     return df[["date", "value"]].sort_values("date")
 
 
+def nasdaq_etf_history_dataframe(symbol: str, start_date: datetime, refresh: bool = False) -> pd.DataFrame:
+    def fetch() -> pd.DataFrame:
+        end_date = datetime.now().date()
+        from_date = start_date.date().isoformat()
+        to_date = end_date.isoformat()
+        print(f"[INFO] Fetching Nasdaq ETF history: {symbol}, from={from_date}, to={to_date}")
+        url = (
+            f"https://api.nasdaq.com/api/quote/{quote(symbol, safe='')}/historical"
+            f"?assetclass=etf&fromdate={from_date}&todate={to_date}&limit=9999"
+        )
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                    "Origin": "https://www.nasdaq.com",
+                    "Referer": "https://www.nasdaq.com/",
+                },
+                timeout=20,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        rows = (((response.json().get("data") or {}).get("tradesTable") or {}).get("rows") or [])
+        return pd.DataFrame(rows)
+
+    df = get_ak_dataframe_cached(("nasdaq_etf_history", symbol, start_date.date().isoformat()), fetch, refresh=refresh)
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    df["date"] = pd.to_datetime(df.get("date"), format="%m/%d/%Y", errors="coerce")
+    close_text = df.get("close")
+    if close_text is None:
+        return pd.DataFrame()
+    df["value"] = pd.to_numeric(close_text.astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False), errors="coerce")
+    df = df.dropna(subset=["date", "value"])
+    df = df[df["value"] > 0]
+    return df[["date", "value"]].sort_values("date")
+
+
 def load_us_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     market_cap_df = fred_csv_dataframe("NCBEILQ027S", refresh=refresh)
     gdp_df = fred_csv_dataframe("GDP", refresh=refresh)
@@ -3695,9 +3735,9 @@ def load_us_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
     # NCBEILQ027S is in millions of dollars; GDP is in billions of dollars.
     gdp_df["gdp"] = gdp_df["gdp"] * 1000
     try:
-        proxy_df = fred_csv_dataframe("SP500", refresh=refresh)
+        last_cap = market_cap_df.sort_values("date").iloc[-1]
+        proxy_df = nasdaq_etf_history_dataframe("VTI", start_date=last_cap.date - timedelta(days=30), refresh=refresh)
         if not proxy_df.empty:
-            last_cap = market_cap_df.sort_values("date").iloc[-1]
             base_proxy = proxy_df[proxy_df["date"] <= last_cap.date].sort_values("date").tail(1)
             latest_proxy = proxy_df.sort_values("date").tail(1)
             if not base_proxy.empty and not latest_proxy.empty:
@@ -3712,7 +3752,7 @@ def load_us_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.Data
                                 "date": latest_date,
                                 "marketCap": estimated_market_cap,
                                 "marketCapQuality": "estimated",
-                                "marketCapProxy": "FRED SP500",
+                                "marketCapProxy": "Nasdaq VTI",
                             }
                         ]
                     )
