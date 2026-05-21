@@ -448,6 +448,48 @@ MARKET_INDEX_CONFIG: dict[str, dict] = {
     },
 }
 
+BUFFETT_INDICATOR_CONFIG: dict[str, dict] = {
+    "us": {
+        "name": "United States",
+        "displayName": "美国",
+        "currency": "USD",
+        "marketCapSource": "FRED NCBEILQ027S",
+        "gdpSource": "FRED GDP",
+        "sourceLabel": "FRED NCBEILQ027S / FRED GDP",
+        "sourceUrls": [
+            "https://fred.stlouisfed.org/series/NCBEILQ027S",
+            "https://fred.stlouisfed.org/series/GDP",
+        ],
+        "sourceQuality": "美国口径使用 FRED 的非金融企业股票市值负债项作为全市场市值代理，GDP 使用 BEA 名义 GDP 季度年化值。",
+    },
+    "hk": {
+        "name": "Hong Kong",
+        "displayName": "香港",
+        "currency": "HKD",
+        "marketCapSource": "HKMA capital-market-statistics",
+        "gdpSource": "HKMA economic-statistics",
+        "sourceLabel": "HKMA Capital Market Statistics / HKMA Economic Statistics",
+        "sourceUrls": [
+            "https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/financial/capital-market-statistics",
+            "https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/financial/economic-statistics",
+        ],
+        "sourceQuality": "香港口径使用 HKMA 转引的股票市价总市值，包含主板及创业板；GDP 使用香港名义 GDP，季度数据按最近四个季度滚动合计。",
+    },
+    "cn": {
+        "name": "Mainland China",
+        "displayName": "中国内地",
+        "currency": "CNY",
+        "marketCapSource": "AKShare macro_china_stock_market_cap",
+        "gdpSource": "AKShare macro_china_gdp",
+        "sourceLabel": "东方财富全国股票交易统计 / 东方财富中国 GDP",
+        "sourceUrls": [
+            "https://data.eastmoney.com/cjsj/gpjytj.html",
+            "https://data.eastmoney.com/cjsj/gdp.html",
+        ],
+        "sourceQuality": "中国内地口径使用上海与深圳市场总市值合计作为 A 股市值代理；当前公开历史源不含北交所长历史序列。",
+    },
+}
+
 ASSET_MAPPING = {
     "现金": [["货币资金"], ["总现金"]],
     "应收款": [
@@ -3582,6 +3624,257 @@ def annualized_index_return(price_points: list[dict]) -> float:
     return round(((end["value"] / start["value"]) ** (1 / years) - 1) * 100, 2)
 
 
+def normalize_buffett_market(market: str | None) -> str:
+    code = str(market or "us").strip().lower()
+    alias_map = {
+        "usa": "us",
+        "america": "us",
+        "united_states": "us",
+        "hk": "hk",
+        "hongkong": "hk",
+        "hong_kong": "hk",
+        "香港": "hk",
+        "china": "cn",
+        "mainland": "cn",
+        "mainland_china": "cn",
+        "cn": "cn",
+        "中国": "cn",
+        "中国内地": "cn",
+    }
+    return alias_map.get(code, code if code in BUFFETT_INDICATOR_CONFIG else "us")
+
+
+def parse_china_month_date(value: object) -> datetime | None:
+    match = re.search(r"(\d{4})年(\d{1,2})月份", str(value or "").strip())
+    if not match:
+        return None
+    return datetime(int(match.group(1)), int(match.group(2)), 1)
+
+
+def parse_china_gdp_quarter(value: object) -> tuple[int, int] | None:
+    match = re.search(r"(\d{4})年第1(?:-(\d))?季度", str(value or "").strip())
+    if not match:
+        return None
+    quarter = int(match.group(2) or "1")
+    if quarter < 1 or quarter > 4:
+        return None
+    return int(match.group(1)), quarter
+
+
+def fred_csv_dataframe(series_id: str, refresh: bool = False) -> pd.DataFrame:
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching FRED series: {series_id}")
+        request = Request(
+            f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}",
+            headers={"User-Agent": "curl/8.0"},
+        )
+        opener = build_opener(ProxyHandler({}))
+        with opener.open(request, timeout=20) as response:
+            return pd.read_csv(BytesIO(response.read()))
+
+    df = get_ak_dataframe_cached(("fred", series_id), fetch, refresh=refresh)
+    if df is None or df.empty or series_id not in df.columns:
+        return pd.DataFrame()
+    df = df.copy()
+    df["date"] = pd.to_datetime(df.get("observation_date"), errors="coerce")
+    df["value"] = pd.to_numeric(df[series_id], errors="coerce")
+    df = df.dropna(subset=["date", "value"])
+    df = df[df["value"] > 0]
+    return df[["date", "value"]].sort_values("date")
+
+
+def load_us_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    market_cap_df = fred_csv_dataframe("NCBEILQ027S", refresh=refresh)
+    gdp_df = fred_csv_dataframe("GDP", refresh=refresh)
+    if market_cap_df.empty or gdp_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    market_cap_df = market_cap_df.rename(columns={"value": "marketCap"})
+    gdp_df = gdp_df.rename(columns={"value": "gdp"})
+    # NCBEILQ027S is in millions of dollars; GDP is in billions of dollars.
+    gdp_df["gdp"] = gdp_df["gdp"] * 1000
+    return market_cap_df, gdp_df
+
+
+def fetch_hkma_records(endpoint: str, refresh: bool = False) -> pd.DataFrame:
+    def fetch() -> pd.DataFrame:
+        print(f"[INFO] Fetching HKMA endpoint: {endpoint}")
+        url = f"https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/financial/{endpoint}?offset=0"
+        with temporary_disable_proxy_env():
+            response = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20,
+                proxies={"http": None, "https": None},
+            )
+            response.raise_for_status()
+        records = ((response.json().get("result") or {}).get("records") or [])
+        return pd.DataFrame(records)
+
+    df = get_ak_dataframe_cached(("hkma", endpoint), fetch, refresh=refresh)
+    return df if df is not None else pd.DataFrame()
+
+
+def load_hk_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cap_df = fetch_hkma_records("capital-market-statistics", refresh=refresh)
+    econ_df = fetch_hkma_records("economic-statistics", refresh=refresh)
+    if cap_df.empty or econ_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    cap_df = cap_df.copy()
+    cap_period = cap_df["end_of_month"].astype(str)
+    cap_df["date"] = pd.to_datetime(cap_period.str.replace("-00", "-12", regex=False) + "-01", errors="coerce")
+    cap_df["marketCap"] = pd.to_numeric(cap_df.get("eq_mkt_ttl_stock_cap"), errors="coerce")
+    cap_df = cap_df.dropna(subset=["date", "marketCap"])[["date", "marketCap"]]
+
+    econ_df = econ_df.copy()
+    econ_period = econ_df["end_of_month"].astype(str)
+    annual_df = econ_df[econ_period.str.endswith("-00")].copy()
+    annual_df["date"] = pd.to_datetime(annual_df["end_of_month"].astype(str).str.replace("-00", "-12", regex=False) + "-01", errors="coerce")
+    annual_df["gdp"] = pd.to_numeric(annual_df.get("nominal_gdp"), errors="coerce")
+
+    quarter_df = econ_df[econ_period.str.endswith(("-03", "-06", "-09", "-12"))].copy()
+    quarter_df["date"] = pd.to_datetime(quarter_df["end_of_month"].astype(str) + "-01", errors="coerce")
+    quarter_df["quarterGdp"] = pd.to_numeric(quarter_df.get("nominal_gdp"), errors="coerce")
+    quarter_df = quarter_df.dropna(subset=["date", "quarterGdp"]).sort_values("date")
+    quarter_df["gdp"] = quarter_df["quarterGdp"].rolling(4, min_periods=4).sum()
+
+    gdp_df = pd.concat([annual_df[["date", "gdp"]], quarter_df[["date", "gdp"]]], ignore_index=True)
+    gdp_df = gdp_df.dropna(subset=["date", "gdp"]).sort_values("date").drop_duplicates(subset=["date"], keep="last")
+    return cap_df.sort_values("date"), gdp_df.sort_values("date")
+
+
+def load_cn_buffett_frames(refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def fetch_cap() -> pd.DataFrame:
+        print("[INFO] Fetching China stock market capitalization from AKShare")
+        return ak.macro_china_stock_market_cap()
+
+    def fetch_gdp() -> pd.DataFrame:
+        print("[INFO] Fetching China GDP from AKShare")
+        return ak.macro_china_gdp()
+
+    cap_df = get_ak_dataframe_cached(("macro_china_stock_market_cap",), fetch_cap, refresh=refresh)
+    gdp_df = get_ak_dataframe_cached(("macro_china_gdp",), fetch_gdp, refresh=refresh)
+    if cap_df is None or cap_df.empty or gdp_df is None or gdp_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    cap_rows = []
+    for row in cap_df.to_dict(orient="records"):
+        date = parse_china_month_date(row.get("数据日期"))
+        market_cap = finite_float(row.get("市价总值-上海")) + finite_float(row.get("市价总值-深圳"))
+        if date and market_cap > 0:
+            cap_rows.append({"date": date, "marketCap": market_cap})
+    cap_points_df = pd.DataFrame(cap_rows).sort_values("date")
+
+    cumulative_rows: list[dict] = []
+    for row in gdp_df.to_dict(orient="records"):
+        parsed = parse_china_gdp_quarter(row.get("季度"))
+        value = finite_float(row.get("国内生产总值-绝对值"))
+        if parsed and value > 0:
+            year, quarter = parsed
+            cumulative_rows.append({"year": year, "quarter": quarter, "cumulative": value})
+    cumulative_df = pd.DataFrame(cumulative_rows)
+    if cumulative_df.empty:
+        return cap_points_df, pd.DataFrame()
+    cumulative_df = cumulative_df.drop_duplicates(subset=["year", "quarter"]).sort_values(["year", "quarter"])
+
+    quarter_rows = []
+    for year, year_df in cumulative_df.groupby("year"):
+        previous = 0.0
+        for row in year_df.sort_values("quarter").itertuples(index=False):
+            quarter_gdp = float(row.cumulative) - previous
+            previous = float(row.cumulative)
+            if quarter_gdp > 0:
+                quarter_rows.append({"date": datetime(int(year), int(row.quarter) * 3, 1), "quarterGdp": quarter_gdp})
+    quarter_df = pd.DataFrame(quarter_rows).sort_values("date")
+    quarter_df["gdp"] = quarter_df["quarterGdp"].rolling(4, min_periods=4).sum()
+    gdp_points_df = quarter_df.dropna(subset=["gdp"])[["date", "gdp"]]
+    return cap_points_df, gdp_points_df
+
+
+def load_buffett_indicator_frames(market_code: str, refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if market_code == "hk":
+        return load_hk_buffett_frames(refresh=refresh)
+    if market_code == "cn":
+        return load_cn_buffett_frames(refresh=refresh)
+    return load_us_buffett_frames(refresh=refresh)
+
+
+def build_buffett_indicator_payload(market: str = "us", years: int = 10, refresh: bool = False) -> dict:
+    code = normalize_buffett_market(market)
+    config = BUFFETT_INDICATOR_CONFIG[code]
+    market_cap_df, gdp_df = load_buffett_indicator_frames(code, refresh=refresh)
+    if market_cap_df.empty or gdp_df.empty:
+        raise ValueError(f"Unable to fetch Buffett indicator data for {config['displayName']}.")
+
+    merged = pd.merge_asof(market_cap_df.sort_values("date"), gdp_df.sort_values("date"), on="date", direction="backward")
+    merged = merged.dropna(subset=["marketCap", "gdp"])
+    merged = merged[(merged["marketCap"] > 0) & (merged["gdp"] > 0)]
+    if merged.empty:
+        raise ValueError(f"Unable to align market capitalization and GDP data for {config['displayName']}.")
+
+    cutoff = datetime.now().date() - timedelta(days=max(years, 1) * 365)
+    filtered = merged[merged["date"].dt.date >= cutoff].copy()
+    if filtered.empty:
+        filtered = merged.copy()
+    filtered["ratio"] = filtered["marketCap"] / filtered["gdp"] * 100
+
+    values = [float(value) for value in filtered["ratio"].tolist() if finite_float(value) > 0]
+    current = filtered.iloc[-1]
+    current_ratio = float(current.ratio)
+    percentile = percentile_rank(values, current_ratio)
+    actual_years = max(0.1, round((filtered.iloc[-1].date.date() - filtered.iloc[0].date.date()).days / 365.25, 1))
+    notes = ["巴菲特指数 = 股票市场总市值 / 名义 GDP。", config["sourceQuality"]]
+    if actual_years < years * 0.7:
+        notes.append(f"当前可用历史约 {actual_years} 年，少于所选 {years} 年区间，历史分位仅代表可取样本。")
+
+    return {
+        "marketCode": code,
+        "marketName": config["name"],
+        "displayName": config["displayName"],
+        "status": "ok" if actual_years >= years * 0.7 else "limited_history",
+        "currency": config["currency"],
+        "sourceLabel": config["sourceLabel"],
+        "dataQuality": {"marketCap": "available", "gdp": "available", "notes": notes},
+        "summary": {
+            "currentDate": current.date.date().isoformat(),
+            "currentRatio": round(current_ratio, 2),
+            "meanRatio": round(sum(values) / len(values), 2),
+            "medianRatio": round(float(pd.Series(values).median()), 2),
+            "lowLine": round(float(pd.Series(values).quantile(0.2)), 2),
+            "highLine": round(float(pd.Series(values).quantile(0.8)), 2),
+            "percentile": percentile,
+            "valuationZone": classify_valuation_zone(percentile),
+            "years": years,
+            "actualYears": actual_years,
+        },
+        "ratioLine": [{"date": row.date.date().isoformat(), "ratio": round(float(row.ratio), 2)} for row in filtered.itertuples(index=False)],
+        "marketCapLine": [{"date": row.date.date().isoformat(), "value": round(float(row.marketCap), 2)} for row in filtered.itertuples(index=False)],
+        "gdpLine": [{"date": row.date.date().isoformat(), "value": round(float(row.gdp), 2)} for row in filtered.itertuples(index=False)],
+        "conclusion": f"{config['displayName']}当前巴菲特指数为 {current_ratio:.1f}%，处于样本历史分位 {percentile * 100:.1f}%。",
+        "sourceUrls": config["sourceUrls"],
+    }
+
+
+def get_buffett_indicator_payload_with_cache(market: str = "us", years: int = 10, refresh: bool = False) -> dict:
+    code = normalize_buffett_market(market)
+    if not refresh:
+        cached_payload = load_cached_payload("buffett_indicator_v1", code, years)
+        if cached_payload is not None:
+            return cached_payload
+    stale_cache = None if refresh else load_latest_cached_payload(f"buffett_indicator_v*__{sanitize_cache_part(code)}__{sanitize_cache_part(years)}.json")
+    try:
+        payload = build_buffett_indicator_payload(market=code, years=years, refresh=refresh)
+        save_cached_payload(payload, "buffett_indicator_v1", code, years)
+        return payload
+    except Exception as exc:
+        if stale_cache is not None:
+            stale_cache = dict(stale_cache)
+            stale_cache["status"] = "stale_cache"
+            stale_cache.setdefault("dataQuality", {}).setdefault("notes", []).append(f"外部数据源暂不可用，使用最近缓存：{exc}")
+            return stale_cache
+        raise
+
+
 def filter_market_index_price_points(config: dict, years: int, refresh: bool = False) -> list[dict]:
     cutoff = datetime.now().date() - timedelta(days=max(years, 1) * 365)
     points = load_market_index_price_points(config, refresh=refresh)
@@ -5133,6 +5426,23 @@ def api_market_index_valuation(index: str = "sp500", years: str = "5", refresh: 
         print(f"[ERROR] {exc}")
         return JSONResponse(
             {"error": str(exc), "index": index, "years": years},
+            status_code=400,
+        )
+
+
+@app.get("/api/market-buffett-indicator")
+def api_market_buffett_indicator(market: str = "us", years: str = "5", refresh: str = ""):
+    try:
+        normalized_years = normalize_years(years, default=5)
+        return get_buffett_indicator_payload_with_cache(
+            market=market,
+            years=normalized_years,
+            refresh=refresh == "1",
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "market": market, "years": years},
             status_code=400,
         )
 

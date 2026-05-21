@@ -7,6 +7,8 @@ import { AppShell } from "../components";
 const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim();
 const API_BASE = configuredApiBase || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5001" : "");
 
+type ValuationZone = "cheap" | "fair" | "expensive" | "extreme";
+
 type MarketIndexValuationResponse = {
   indexCode: string;
   indexName: string;
@@ -27,7 +29,7 @@ type MarketIndexValuationResponse = {
     lowLine: number;
     highLine: number;
     percentile: number;
-    valuationZone: "cheap" | "fair" | "expensive" | "extreme";
+    valuationZone: ValuationZone;
     earningsYield: number;
     tenYearYield?: { date: string; value: number; unit: string; source: string } | null;
     equityRiskPremium?: number | null;
@@ -37,6 +39,37 @@ type MarketIndexValuationResponse = {
   priceLine: Array<{ date: string; value: number }>;
   interestRateLine?: Array<{ date: string; value: number }>;
   interestRateLabel?: string;
+  conclusion: string;
+  sourceUrls: string[];
+};
+
+type BuffettIndicatorResponse = {
+  marketCode: string;
+  marketName: string;
+  displayName: string;
+  status: string;
+  currency: string;
+  sourceLabel: string;
+  dataQuality: {
+    marketCap: string;
+    gdp: string;
+    notes: string[];
+  };
+  summary: {
+    currentDate: string;
+    currentRatio: number;
+    meanRatio: number;
+    medianRatio: number;
+    lowLine: number;
+    highLine: number;
+    percentile: number;
+    valuationZone: ValuationZone;
+    years: number;
+    actualYears: number;
+  };
+  ratioLine: Array<{ date: string; ratio: number }>;
+  marketCapLine: Array<{ date: string; value: number }>;
+  gdpLine: Array<{ date: string; value: number }>;
   conclusion: string;
   sourceUrls: string[];
 };
@@ -51,7 +84,7 @@ function formatPercent(value?: number | null) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function getValuationZoneLabel(zone?: MarketIndexValuationResponse["summary"]["valuationZone"]) {
+function getValuationZoneLabel(zone?: ValuationZone) {
   if (zone === "cheap") return "偏低";
   if (zone === "fair") return "合理";
   if (zone === "expensive") return "偏贵";
@@ -59,7 +92,7 @@ function getValuationZoneLabel(zone?: MarketIndexValuationResponse["summary"]["v
   return "-";
 }
 
-function getValuationZoneTone(zone?: MarketIndexValuationResponse["summary"]["valuationZone"]) {
+function getValuationZoneTone(zone?: ValuationZone) {
   if (zone === "cheap") return "positive";
   if (zone === "fair") return "neutral";
   if (zone === "expensive") return "warning";
@@ -81,13 +114,24 @@ export default function MarketValuationClient() {
   const [marketIndexStatus, setMarketIndexStatus] = useState("等待加载大盘估值数据");
   const [marketIndexError, setMarketIndexError] = useState<string | null>(null);
   const [isMarketIndexLoading, setIsMarketIndexLoading] = useState(false);
+  const [buffettMarketCode, setBuffettMarketCode] = useState("us");
+  const [buffettYears, setBuffettYears] = useState("5");
+  const [buffettData, setBuffettData] = useState<BuffettIndicatorResponse | null>(null);
+  const [buffettStatus, setBuffettStatus] = useState("等待加载巴菲特指数");
+  const [buffettError, setBuffettError] = useState<string | null>(null);
+  const [isBuffettLoading, setIsBuffettLoading] = useState(false);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chart = useRef<echarts.ECharts | null>(null);
   const rateChartRef = useRef<HTMLDivElement | null>(null);
   const rateChart = useRef<echarts.ECharts | null>(null);
+  const buffettChartRef = useRef<HTMLDivElement | null>(null);
+  const buffettChart = useRef<echarts.ECharts | null>(null);
   const marketIndexAbortRef = useRef<AbortController | null>(null);
   const marketIndexRequestIdRef = useRef(0);
   const marketIndexRefreshInFlightRef = useRef(false);
+  const buffettAbortRef = useRef<AbortController | null>(null);
+  const buffettRequestIdRef = useRef(0);
+  const buffettRefreshInFlightRef = useRef(false);
 
   async function loadMarketIndexData(indexCode = marketIndexCode, rangeYears = marketIndexYears, refresh = false) {
     if (refresh && marketIndexRefreshInFlightRef.current) return;
@@ -137,8 +181,57 @@ export default function MarketValuationClient() {
     }
   }
 
+  async function loadBuffettData(marketCode = buffettMarketCode, rangeYears = buffettYears, refresh = false) {
+    if (refresh && buffettRefreshInFlightRef.current) return;
+    if (refresh) buffettRefreshInFlightRef.current = true;
+    buffettAbortRef.current?.abort();
+    const requestId = buffettRequestIdRef.current + 1;
+    buffettRequestIdRef.current = requestId;
+    setIsBuffettLoading(true);
+    setBuffettStatus("正在加载巴菲特指数...");
+    setBuffettError(null);
+    setBuffettData(null);
+    const controller = new AbortController();
+    buffettAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 25000);
+    try {
+      const params = new URLSearchParams({ market: marketCode, years: rangeYears });
+      if (refresh) params.set("refresh", "1");
+      const response = await fetch(`${API_BASE}/api/market-buffett-indicator?${params.toString()}`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorData = (await response.json()) as { error?: string };
+          if (errorData.error) errorMessage = errorData.error;
+        } catch {
+          // Keep the HTTP status when the backend returns a non-JSON error body.
+        }
+        throw new Error(errorMessage);
+      }
+      const data = (await response.json()) as BuffettIndicatorResponse;
+      if (buffettRequestIdRef.current !== requestId) return;
+      setBuffettData(data);
+      setBuffettStatus(data.status === "stale_cache" ? "已使用最近缓存数据" : "巴菲特指数已加载");
+    } catch (error) {
+      if (buffettRequestIdRef.current !== requestId) return;
+      const message = error instanceof DOMException && error.name === "AbortError" ? "请求超时，请确认后端服务是否启动" : error instanceof Error ? error.message : "未知错误";
+      setBuffettError(message);
+      setBuffettStatus("巴菲特指数加载失败");
+    } finally {
+      window.clearTimeout(timeout);
+      if (buffettRequestIdRef.current === requestId) {
+        buffettAbortRef.current = null;
+        setIsBuffettLoading(false);
+      }
+      if (refresh) buffettRefreshInFlightRef.current = false;
+    }
+  }
+
   useEffect(() => {
     void loadMarketIndexData("sp500", "5");
+    void loadBuffettData("us", "5");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -146,6 +239,7 @@ export default function MarketValuationClient() {
     const handleResize = () => {
       chart.current?.resize();
       rateChart.current?.resize();
+      buffettChart.current?.resize();
     };
     window.addEventListener("resize", handleResize);
     return () => {
@@ -154,6 +248,8 @@ export default function MarketValuationClient() {
       chart.current = null;
       rateChart.current?.dispose();
       rateChart.current = null;
+      buffettChart.current?.dispose();
+      buffettChart.current = null;
     };
   }, []);
 
@@ -311,6 +407,97 @@ export default function MarketValuationClient() {
     });
   }, [marketIndexData]);
 
+  useEffect(() => {
+    if (!buffettData || !buffettChartRef.current) return;
+    buffettChart.current = echarts.getInstanceByDom(buffettChartRef.current) ?? echarts.init(buffettChartRef.current);
+
+    const dates = buffettData.ratioLine.map((item) => item.date);
+    const horizontalLine = (value: number) => dates.map((date) => [date, value]);
+    const legendData = ["巴菲特指数", "均值", "低估线", "高估线"];
+
+    buffettChart.current.clear();
+    buffettChart.current.setOption(
+      {
+        animationDuration: 400,
+        tooltip: {
+          trigger: "axis",
+          formatter: (params: unknown) => {
+            const rows = (Array.isArray(params) ? params : [params]) as Array<{
+              axisValueLabel?: string;
+              marker?: string;
+              seriesName?: string;
+              value?: unknown;
+            }>;
+            const title = rows[0]?.axisValueLabel || "";
+            const lines = rows.map((row) => {
+              const rawValue = Array.isArray(row.value) ? row.value[1] : row.value;
+              const numericValue = typeof rawValue === "number" ? rawValue : Number(rawValue);
+              const value = Number.isFinite(numericValue) ? `${numericValue.toFixed(1)}%` : "-";
+              return `${row.marker || ""}${row.seriesName || ""}: ${value}`;
+            });
+            return [title, ...lines].filter(Boolean).join("<br/>");
+          },
+        },
+        legend: { top: 8, data: legendData },
+        grid: { top: 58, left: 58, right: 40, bottom: 42, containLabel: true },
+        xAxis: {
+          type: "time",
+          boundaryGap: false,
+          axisLabel: {
+            hideOverlap: true,
+            formatter(value: number) {
+              return echarts.time.format(value, "{yyyy}", false);
+            },
+          },
+        },
+        yAxis: {
+          type: "value",
+          name: "市值/GDP(%)",
+          splitLine: { lineStyle: { color: "#dce5df" } },
+          axisLabel: { formatter: "{value}%" },
+        },
+        series: [
+          {
+            name: "巴菲特指数",
+            type: "line",
+            showSymbol: false,
+            smooth: true,
+            data: buffettData.ratioLine.map((item) => [item.date, item.ratio]),
+            lineStyle: { width: 3, color: "#101820" },
+            itemStyle: { color: "#101820" },
+          },
+          {
+            name: "均值",
+            type: "line",
+            showSymbol: false,
+            data: horizontalLine(buffettData.summary.meanRatio),
+            lineStyle: { type: "dashed", width: 2, color: "#b7791f" },
+          },
+          {
+            name: "低估线",
+            type: "line",
+            showSymbol: false,
+            data: horizontalLine(buffettData.summary.lowLine),
+            lineStyle: { type: "dashed", width: 2, color: "#087f5b" },
+          },
+          {
+            name: "高估线",
+            type: "line",
+            showSymbol: false,
+            data: horizontalLine(buffettData.summary.highLine),
+            lineStyle: { type: "dashed", width: 2, color: "#d93025" },
+          },
+        ],
+      },
+      { notMerge: true }
+    );
+
+    requestAnimationFrame(() => {
+      buffettChart.current?.resize();
+      window.setTimeout(() => buffettChart.current?.resize(), 80);
+    });
+  }, [buffettData]);
+
   return (
     <AppShell active="markets">
       <section className="market-valuation-section market-valuation-page" aria-label="大盘估值">
@@ -440,6 +627,127 @@ export default function MarketValuationClient() {
           </>
         ) : (
           <div className="market-empty-state">{marketIndexStatus}</div>
+        )}
+      </section>
+
+      <section className="market-valuation-section market-valuation-page" aria-label="巴菲特指数">
+        <div className="market-valuation-header">
+          <div>
+            <div className="summary-kicker">Buffett Indicator</div>
+            <h2>巴菲特指数</h2>
+            <p>{buffettData?.conclusion || "用股票市场总市值与名义 GDP 的比例，观察美国、香港和中国内地市场的宏观估值温度。"}</p>
+          </div>
+          <div className="market-index-controls">
+            {[
+              { code: "us", label: "美国" },
+              { code: "hk", label: "香港" },
+              { code: "cn", label: "中国内地" },
+            ].map((item) => (
+              <button
+                key={item.code}
+                type="button"
+                className={`market-index-button ${buffettMarketCode === item.code ? "active" : ""}`}
+                disabled={isBuffettLoading}
+                onClick={() => {
+                  setBuffettMarketCode(item.code);
+                  void loadBuffettData(item.code, buffettYears);
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+            <select
+              value={buffettYears}
+              disabled={isBuffettLoading}
+              onChange={(event) => {
+                setBuffettYears(event.target.value);
+                void loadBuffettData(buffettMarketCode, event.target.value);
+              }}
+            >
+              <option value="5">5Y</option>
+              <option value="10">10Y</option>
+              <option value="20">20Y</option>
+              <option value="50">Max</option>
+            </select>
+            <button
+              type="button"
+              className="market-index-button"
+              disabled={isBuffettLoading}
+              onClick={() => void loadBuffettData(buffettMarketCode, buffettYears, true)}
+            >
+              {isBuffettLoading ? "加载中" : "刷新"}
+            </button>
+          </div>
+        </div>
+
+        {buffettError ? <div className="error-box">巴菲特指数加载失败：{buffettError}</div> : null}
+
+        {buffettData ? (
+          <>
+            <div className="market-valuation-grid">
+              <div className="market-kpi-card">
+                <span>当前市值 / GDP</span>
+                <strong>{formatNumber(buffettData.summary.currentRatio, 1)}%</strong>
+                <em>{buffettData.summary.currentDate}</em>
+              </div>
+              <div className={`market-kpi-card tone-${getValuationZoneTone(buffettData.summary.valuationZone)}`}>
+                <span>历史分位</span>
+                <strong>{formatPercent(buffettData.summary.percentile)}</strong>
+                <em>{getValuationZoneLabel(buffettData.summary.valuationZone)}</em>
+              </div>
+              <div className="market-kpi-card">
+                <span>均值 / 中位数</span>
+                <strong>
+                  {formatNumber(buffettData.summary.meanRatio, 1)}% / {formatNumber(buffettData.summary.medianRatio, 1)}%
+                </strong>
+                <em>样本约 {formatNumber(buffettData.summary.actualYears, 1)} 年</em>
+              </div>
+              <div className="market-kpi-card">
+                <span>区间线</span>
+                <strong>
+                  {formatNumber(buffettData.summary.lowLine, 1)}% / {formatNumber(buffettData.summary.highLine, 1)}%
+                </strong>
+                <em>20% / 80% 分位</em>
+              </div>
+            </div>
+
+            <div className="market-valuation-body">
+              <div className="market-chart-card market-comparison-card">
+                <div className="market-chart-title">市值 / GDP 趋势</div>
+                <div ref={buffettChartRef} className="chart-box market-index-chart" />
+              </div>
+              <div className="market-side-card">
+                <div className="market-chart-title">数据口径</div>
+                <div className="market-source-row">
+                  <span>股票总市值</span>
+                  <strong>{getDataQualityLabel(buffettData.dataQuality.marketCap)}</strong>
+                </div>
+                <div className="market-source-row">
+                  <span>名义 GDP</span>
+                  <strong>{getDataQualityLabel(buffettData.dataQuality.gdp)}</strong>
+                </div>
+                <div className="market-source-row">
+                  <span>币种</span>
+                  <strong>{buffettData.currency}</strong>
+                </div>
+                <p>来源：{buffettData.sourceLabel}</p>
+                {buffettData.dataQuality.notes.filter(Boolean).map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+                {buffettData.sourceUrls.length ? (
+                  <div className="market-source-links">
+                    {buffettData.sourceUrls.map((url) => (
+                      <a key={url} href={url} target="_blank" rel="noreferrer">
+                        数据源
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="market-empty-state">{buffettStatus}</div>
         )}
       </section>
     </AppShell>
