@@ -526,9 +526,9 @@ export default function MarketValuationClient() {
               { type: "index", code: "csi300", label: "沪深300" },
               { type: "index", code: "csi500", label: "中证500" },
               { type: "index", code: "dividend_low_vol_100", label: "红利低波100" },
-              { type: "buffett", code: "us", label: "美国巴菲特" },
-              { type: "buffett", code: "hk", label: "香港巴菲特" },
-              { type: "buffett", code: "cn", label: "中国巴菲特" },
+              { type: "buffett", code: "us", label: "美国市值/GDP" },
+              { type: "buffett", code: "hk", label: "香港市值/GDP" },
+              { type: "buffett", code: "cn", label: "中国市值/GDP" },
             ].map((item) => (
               <button
                 key={`${item.type}-${item.code}`}
