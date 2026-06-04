@@ -15,6 +15,10 @@ venv/
 node_modules/
 .next/
 out/
+*.tsbuildinfo
+
+# Runtime cache
+backend/cache/*.json
 
 # Env
 .env
