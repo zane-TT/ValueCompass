@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
+
+import httpx
+from openai import OpenAI
 
 try:
     from .config import DEFAULT_OPENAI_BASE_URL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENAI_TEMPERATURE
@@ -37,3 +41,17 @@ def get_openai_settings() -> dict:
         "model": model,
         "temperature": temperature,
     }
+
+
+@lru_cache(maxsize=8)
+def _get_openai_client(api_key: str, base_url: str) -> OpenAI:
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        http_client=httpx.Client(trust_env=False),
+    )
+
+
+def get_openai_client(settings: dict | None = None) -> OpenAI:
+    settings = settings or get_openai_settings()
+    return _get_openai_client(settings["api_key"], settings["base_url"])

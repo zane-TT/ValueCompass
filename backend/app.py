@@ -12,13 +12,11 @@ from urllib.parse import quote
 from urllib.request import ProxyHandler, Request, build_opener
 
 import akshare as ak
-import httpx
 import pandas as pd
 import requests
 from fastapi import Body, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from openai import OpenAI
 
 try:
     from .core.cache import (
@@ -40,7 +38,7 @@ try:
         BASE_DIR,
         YI,
     )
-    from .core.openai_settings import get_openai_settings
+    from .core.openai_settings import get_openai_client, get_openai_settings
     from .core.utils import (
         dataframe_preview,
         finite_float,
@@ -73,7 +71,7 @@ except ImportError:
         BASE_DIR,
         YI,
     )
-    from core.openai_settings import get_openai_settings
+    from core.openai_settings import get_openai_client, get_openai_settings
     from core.utils import (
         dataframe_preview,
         finite_float,
@@ -2945,11 +2943,7 @@ def ai_classify_profit_driver_model(profile_payload: dict, main_business_payload
             for key, value in DRIVER_MODEL_REGISTRY.items()
         },
     }
-    client = OpenAI(
-        api_key=settings["api_key"],
-        base_url=settings["base_url"],
-        http_client=httpx.Client(trust_env=False),
-    )
+    client = get_openai_client(settings)
     prompt = (
         "你是上市公司利润驱动模型识别器。请只从 knownDriverModels 中选择模型；如果没有专用模型，选择 generic_volume_price 或 generic_spread。\n"
         "不要编造行情数值，不要输出 URL。你只负责选择利润驱动模型、业务分部、证据和数据缺口。\n"
@@ -5003,11 +4997,7 @@ def enrich_revenue_items_with_ai_explanations(
 
     try:
         settings = get_openai_settings()
-        client = OpenAI(
-            api_key=settings["api_key"],
-            base_url=settings["base_url"],
-            http_client=httpx.Client(trust_env=False),
-        )
+        client = get_openai_client(settings)
         company_context = {
             "stock": stock,
             "companyName": profile_payload.get("companyName", ""),
@@ -5260,11 +5250,7 @@ def generate_ai_analysis(stock: str, period: str | None, years: int, company_mat
     )
     business_type_analysis = business_type_result.get("analysis")
 
-    client = OpenAI(
-        api_key=settings["api_key"],
-        base_url=settings["base_url"],
-        http_client=httpx.Client(trust_env=False),
-    )
+    client = get_openai_client(settings)
 
     prompt_sections = [
         "请基于下面的财报和估值数据，生成一段中文分析。\n"
@@ -5330,11 +5316,7 @@ def generate_business_type_analysis(
 ) -> dict:
     settings = get_openai_settings()
     context = context or build_ai_analysis_context(stock=stock, period=period, years=years)
-    client = OpenAI(
-        api_key=settings["api_key"],
-        base_url=settings["base_url"],
-        http_client=httpx.Client(trust_env=False),
-    )
+    client = get_openai_client(settings)
 
     schema_template = {
         "company_name": "",
