@@ -185,7 +185,7 @@ render.yaml           Render deployment configuration
 ## Notes
 
 - Data comes from public sources and may be delayed, incomplete, or inconsistent across providers.
-- `backend/cache/` is used to speed up repeated local analysis.
+- `backend/cache/` is generated locally to speed up repeated analysis and is ignored by Git.
 - This is a learning and research project, not a trading system.
 
 ## Roadmap
