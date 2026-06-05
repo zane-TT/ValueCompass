@@ -304,24 +304,7 @@ button {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0;
-  text-transform: none;
-  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
-}
 
-.field input:focus {
-  background: #fffef2;
-  box-shadow: 4px 4px 0 var(--ink);
-  transform: translate(-1px, -1px);
-}
-
-.query-button {
-  min-height: 44px;
-  padding: 0 18px;
-  border: 2px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--accent);
-  color: #fff;
-  box-shadow: var(--shadow-small);
   font-weight: 900;
   cursor: pointer;
   transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
