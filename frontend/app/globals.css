@@ -1295,6 +1295,64 @@ button {
   color: var(--danger);
 }
 
+.yearly-summary-section {
+  margin-top: 14px;
+}
+
+.yearly-summary-card {
+  border: 2px solid rgba(18, 18, 18, 0.14);
+  background: var(--paper-cool);
+  padding: 12px 14px;
+}
+
+.yearly-summary-title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+  margin-bottom: 8px;
+}
+
+.yearly-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.yearly-summary-table th,
+.yearly-summary-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(18, 18, 18, 0.08);
+  text-align: right;
+  color: var(--text);
+}
+
+.yearly-summary-table th:first-child,
+.yearly-summary-table td:first-child {
+  text-align: left;
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.yearly-summary-table th {
+  color: var(--muted);
+  font-weight: 850;
+  font-size: 12px;
+}
+
+.yoy-cell.yoy-positive {
+  color: #1f7a3a;
+  font-weight: 800;
+}
+
+.yoy-cell.yoy-warning {
+  color: #b3261e;
+  font-weight: 800;
+}
+
+.yoy-cell.yoy-neutral {
+  color: var(--muted);
+}
+
 .industry-table-grid {
   display: grid;
   gap: 10px;

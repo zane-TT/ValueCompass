@@ -35,6 +35,14 @@ type BalanceResponse = {
   conclusion: string;
 };
 
+type YearlySummaryRow = {
+  year: string;
+  revenue: number | null;
+  revenueYoY: number | null;
+  netProfit: number | null;
+  netProfitYoY: number | null;
+};
+
 type TrendResponse = {
   stock: string;
   title: string;
@@ -44,6 +52,8 @@ type TrendResponse = {
   revenueBars: Array<{ date: string; value: number }>;
   marketCapLine: Array<{ date: string; value: number }>;
   conclusion: string;
+  yearlySummary?: YearlySummaryRow[];
+  performanceConclusion?: string;
 };
 
 type PeTrendResponse = {
@@ -66,6 +76,8 @@ type ProfitMarketCapResponse = {
   profitBars: Array<{ date: string; value: number }>;
   marketCapLine: Array<{ date: string; value: number }>;
   conclusion: string;
+  yearlySummary?: YearlySummaryRow[];
+  performanceConclusion?: string;
 };
 
 type CashFlowQualityResponse = {
@@ -684,6 +696,18 @@ function formatYiValue(value: number) {
 function formatYiChange(value: number) {
   if (Math.abs(value) < 0.01) return "基本持平";
   return `${value > 0 ? "增加" : "减少"} ${Math.abs(value).toFixed(2)} 亿元`;
+}
+
+function formatYoy(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${value > 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
+}
+
+function getYoyTone(value: number | null | undefined): "positive" | "warning" | "neutral" {
+  if (value === null || value === undefined || Number.isNaN(value)) return "neutral";
+  if (value > 0) return "positive";
+  if (value < 0) return "warning";
+  return "neutral";
 }
 
 function getScenarioTone(name: string) {
@@ -2281,6 +2305,41 @@ export default function HomePage() {
           ) : null}
         </div>
       </section>
+
+      {(() => {
+        const summary = profitData?.yearlySummary ?? trendData?.yearlySummary ?? [];
+        if (!summary.length) return null;
+        const recent = summary.slice(-5);
+        return (
+          <section className="yearly-summary-section" aria-label="近年业绩同比">
+            <div className="yearly-summary-card">
+              <div className="yearly-summary-title">近年业绩同比</div>
+              <table className="yearly-summary-table">
+                <thead>
+                  <tr>
+                    <th>年份</th>
+                    <th>营收（亿元）</th>
+                    <th>营收同比</th>
+                    <th>归母净利润（亿元）</th>
+                    <th>净利润同比</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((row) => (
+                    <tr key={row.year}>
+                      <td>{row.year}</td>
+                      <td>{formatNumber(row.revenue)}</td>
+                      <td className={`yoy-cell yoy-${getYoyTone(row.revenueYoY)}`}>{formatYoy(row.revenueYoY)}</td>
+                      <td>{formatNumber(row.netProfit)}</td>
+                      <td className={`yoy-cell yoy-${getYoyTone(row.netProfitYoY)}`}>{formatYoy(row.netProfitYoY)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      })()}
 
       <section aria-label="业务结构">
         <BusinessModelSection
