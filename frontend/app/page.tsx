@@ -2310,10 +2310,15 @@ export default function HomePage() {
         const summary = profitData?.yearlySummary ?? trendData?.yearlySummary ?? [];
         if (!summary.length) return null;
         const recent = summary.slice(-5);
+        const performanceConclusion =
+          profitData?.performanceConclusion || trendData?.performanceConclusion || "";
         return (
           <section className="yearly-summary-section" aria-label="近年业绩同比">
             <div className="yearly-summary-card">
               <div className="yearly-summary-title">近年业绩同比</div>
+              {performanceConclusion ? (
+                <div className="yearly-summary-conclusion">{performanceConclusion}</div>
+              ) : null}
               <table className="yearly-summary-table">
                 <thead>
                   <tr>
@@ -2369,7 +2374,9 @@ export default function HomePage() {
                 {autoConclusionItems.map((item) => `${item.label}：${item.value}`).join(" · ")}
               </div>
               <div className="subtle">
-                {cashFlowData?.conclusion ||
+                {profitData?.performanceConclusion ||
+                  trendData?.performanceConclusion ||
+                  cashFlowData?.conclusion ||
                   profitData?.conclusion ||
                   "等待财务数据加载完成后生成判断。"}
               </div>

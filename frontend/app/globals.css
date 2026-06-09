@@ -1312,6 +1312,13 @@ button {
   margin-bottom: 8px;
 }
 
+.yearly-summary-conclusion {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+  margin-bottom: 8px;
+}
+
 .yearly-summary-table {
   width: 100%;
   border-collapse: collapse;
