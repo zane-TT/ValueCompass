@@ -4658,6 +4658,18 @@ def build_dashboard_data_payload(
                 print(f"[ERROR] dashboard task failed, key={key}: {exc}")
                 errors[key] = str(exc)
 
+    try:
+        data["riskSummary"] = build_risk_summary_from_payloads(
+            stock,
+            data.get("balance"),
+            data.get("profitMarketCap"),
+            data.get("revenueMarketCap"),
+            data.get("cashFlowQuality"),
+        )
+    except Exception as exc:
+        print(f"[ERROR] dashboard task failed, key=riskSummary: {exc}")
+        errors["riskSummary"] = str(exc)
+
     return {
         "status": "partial" if errors else "ok",
         "stock": stock,
