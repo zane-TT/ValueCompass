@@ -1186,6 +1186,200 @@ def get_cash_flow_quality_payload(stock: str, years: int) -> dict:
     }
 
 
+def detect_financial_risks(
+    balance: dict | None,
+    profit: dict | None,
+    revenue: dict | None,
+    cash_flow: dict | None,
+) -> list[dict]:
+    risks: list[dict] = []
+
+    profit_bars = [b for b in ((profit or {}).get("profitBars") or []) if b.get("value") is not None]
+    if profit_bars:
+        latest_profit = profit_bars[-1]
+        np_val = finite_float(latest_profit.get("value"))
+        if isinstance(np_val, (int, float)) and np_val < 0:
+            risks.append({
+                "level": "high",
+                "category": "盈利",
+                "title": "最近报告期亏损",
+                "evidence": f"最近报告期（{latest_profit.get('date')}）归母净利润 {np_val:.2f} 亿元，公司处于亏损状态。",
+                "metric": "netProfit",
+            })
+
+    yearly_summary = (profit or {}).get("yearlySummary") or (revenue or {}).get("yearlySummary") or []
+    if len(yearly_summary) >= 3:
+        prev_year = yearly_summary[-2]
+        latest_year = yearly_summary[-1]
+        prev_yoy = prev_year.get("netProfitYoY")
+        latest_yoy = latest_year.get("netProfitYoY")
+        if (
+            isinstance(prev_yoy, (int, float)) and prev_yoy < 0
+            and isinstance(latest_yoy, (int, float)) and latest_yoy < 0
+        ):
+            risks.append({
+                "level": "medium",
+                "category": "盈利",
+                "title": "净利润连续下降",
+                "evidence": (
+                    f"{prev_year.get('year')} / {latest_year.get('year')} 归母净利润同比连续两年为负"
+                    f"（{prev_yoy:+.1%} / {latest_yoy:+.1%}）。"
+                ),
+                "metric": "netProfitYoY",
+            })
+
+    if yearly_summary:
+        latest_year = yearly_summary[-1]
+        rev_yoy = latest_year.get("revenueYoY")
+        np_yoy = latest_year.get("netProfitYoY")
+        if (
+            isinstance(rev_yoy, (int, float)) and rev_yoy < 0
+            and isinstance(np_yoy, (int, float)) and np_yoy < 0
+        ):
+            risks.append({
+                "level": "medium",
+                "category": "营收&盈利",
+                "title": "营收与利润同比双降",
+                "evidence": (
+                    f"{latest_year.get('year')} 年营收同比 {rev_yoy:+.1%}，"
+                    f"归母净利润同比 {np_yoy:+.1%}，收入和利润同步下滑。"
+                ),
+                "metric": "revenueYoY,netProfitYoY",
+            })
+
+    cash_flow_bars = [b for b in ((cash_flow or {}).get("operatingCashFlow") or []) if b.get("value") is not None]
+    if cash_flow_bars:
+        latest_cf = cash_flow_bars[-1]
+        cf_val = finite_float(latest_cf.get("value"))
+        if isinstance(cf_val, (int, float)) and cf_val < 0:
+            streak = 0
+            for bar in reversed(cash_flow_bars):
+                v = finite_float(bar.get("value"))
+                if isinstance(v, (int, float)) and v < 0:
+                    streak += 1
+                else:
+                    break
+            level = "high" if streak >= 2 else "medium"
+            tail = f"，已连续 {streak} 期为负。" if streak >= 2 else "，利润现金含量不足。"
+            risks.append({
+                "level": level,
+                "category": "现金流",
+                "title": "经营现金流为负" + ("（连续）" if streak >= 2 else ""),
+                "evidence": f"最近报告期（{latest_cf.get('date')}）经营现金流 {cf_val:.2f} 亿元" + tail,
+                "metric": "operatingCashFlow",
+            })
+
+    ratio_bars = [r for r in ((cash_flow or {}).get("cashToProfitRatio") or []) if r.get("value") is not None]
+    if ratio_bars:
+        latest_ratio = ratio_bars[-1]
+        ratio_val = finite_float(latest_ratio.get("value"))
+        if isinstance(ratio_val, (int, float)) and 0 < ratio_val < 0.5:
+            risks.append({
+                "level": "medium",
+                "category": "现金流",
+                "title": "净现比偏低",
+                "evidence": (
+                    f"最近报告期（{latest_ratio.get('date')}）净现比 {ratio_val:.2f}，"
+                    f"经营现金流对净利润覆盖不足 0.5 倍。"
+                ),
+                "metric": "cashToProfitRatio",
+            })
+
+    bar_data = (balance or {}).get("barData") or []
+    if bar_data:
+        assets = [b for b in bar_data if b.get("type") == "asset"]
+        liabilities = [b for b in bar_data if b.get("type") == "liability"]
+        total_assets = sum((finite_float(b.get("value")) or 0.0) for b in assets)
+        total_liabs = sum((finite_float(b.get("value")) or 0.0) for b in liabilities)
+        report_date = (balance or {}).get("reportDate", "")
+
+        if total_assets > 0:
+            debt_ratio = total_liabs / total_assets
+            if debt_ratio > 0.70:
+                risks.append({
+                    "level": "high",
+                    "category": "杠杆",
+                    "title": "资产负债率偏高",
+                    "evidence": (
+                        f"报告期 {report_date} 总负债 {total_liabs:.2f} 亿元 / "
+                        f"总资产 {total_assets:.2f} 亿元 = {debt_ratio:.1%}，超过 70%。"
+                    ),
+                    "metric": "debtToAsset",
+                })
+            elif debt_ratio > 0.50:
+                risks.append({
+                    "level": "observation",
+                    "category": "杠杆",
+                    "title": "资产负债率较高",
+                    "evidence": (
+                        f"报告期 {report_date} 总负债 {total_liabs:.2f} 亿元 / "
+                        f"总资产 {total_assets:.2f} 亿元 = {debt_ratio:.1%}，处于 50%-70% 区间。"
+                    ),
+                    "metric": "debtToAsset",
+                })
+
+            inv_val = next((finite_float(b.get("value")) for b in assets if b.get("name") == "存货"), None)
+            if isinstance(inv_val, (int, float)) and inv_val > 0:
+                inv_ratio = inv_val / total_assets
+                if inv_ratio > 0.30:
+                    risks.append({
+                        "level": "medium",
+                        "category": "营运",
+                        "title": "存货占比偏高",
+                        "evidence": f"存货占总资产 {inv_ratio:.1%}（{inv_val:.2f} 亿元 / {total_assets:.2f} 亿元）。",
+                        "metric": "inventoryRatio",
+                    })
+                elif inv_ratio > 0.20:
+                    risks.append({
+                        "level": "observation",
+                        "category": "营运",
+                        "title": "存货占比较高",
+                        "evidence": f"存货占总资产 {inv_ratio:.1%}（{inv_val:.2f} 亿元 / {total_assets:.2f} 亿元）。",
+                        "metric": "inventoryRatio",
+                    })
+
+            ar_val = next((finite_float(b.get("value")) for b in assets if b.get("name") == "应收款"), None)
+            if isinstance(ar_val, (int, float)) and ar_val > 0:
+                ar_ratio = ar_val / total_assets
+                if ar_ratio > 0.30:
+                    risks.append({
+                        "level": "medium",
+                        "category": "营运",
+                        "title": "应收账款占比偏高",
+                        "evidence": f"应收款占总资产 {ar_ratio:.1%}（{ar_val:.2f} 亿元 / {total_assets:.2f} 亿元）。",
+                        "metric": "receivablesRatio",
+                    })
+                elif ar_ratio > 0.20:
+                    risks.append({
+                        "level": "observation",
+                        "category": "营运",
+                        "title": "应收账款占比较高",
+                        "evidence": f"应收款占总资产 {ar_ratio:.1%}（{ar_val:.2f} 亿元 / {total_assets:.2f} 亿元）。",
+                        "metric": "receivablesRatio",
+                    })
+
+    return risks
+
+
+def summarize_risks(risks: list[dict]) -> str:
+    if not risks:
+        return "近期数据未触发任何风险规则。"
+
+    counts = {"high": 0, "medium": 0, "observation": 0}
+    for item in risks:
+        level = item.get("level", "observation")
+        counts[level] = counts.get(level, 0) + 1
+
+    parts: list[str] = []
+    if counts["high"]:
+        parts.append(f"高风险 {counts['high']} 项")
+    if counts["medium"]:
+        parts.append(f"中风险 {counts['medium']} 项")
+    if counts["observation"]:
+        parts.append(f"观察项 {counts['observation']} 项")
+    return "检测到" + "，".join(parts) + "，请重点关注。"
+
+
 def valuation_period_from_years(years: int) -> str:
     if years <= 1:
         return "近一年"
