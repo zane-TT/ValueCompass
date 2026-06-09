@@ -1147,8 +1147,10 @@ def get_revenue_market_cap_payload(stock: str, years: int) -> dict:
 
 
 def get_profit_market_cap_payload(stock: str, years: int) -> dict:
-    profit_bars = build_profit_bars(load_profit_sheet(stock), years)
+    profit_sheet = load_profit_sheet(stock)
+    profit_bars = build_profit_bars(profit_sheet, years)
     market_cap_line = build_market_cap_line(load_market_cap(stock, years), years, profit_bars)
+    performance = build_performance_summary(profit_sheet, years)
 
     return {
         "stock": stock,
@@ -1159,6 +1161,8 @@ def get_profit_market_cap_payload(stock: str, years: int) -> dict:
         "profitBars": profit_bars,
         "marketCapLine": market_cap_line,
         "conclusion": generate_profit_market_cap_conclusion(profit_bars, market_cap_line),
+        "yearlySummary": performance["yearlySummary"],
+        "performanceConclusion": performance["performanceConclusion"],
     }
 
 
@@ -1296,7 +1300,7 @@ def get_revenue_market_cap_payload_with_cache(stock: str, years: int, refresh: b
 
 def get_profit_market_cap_payload_with_cache(stock: str, years: int, refresh: bool = False) -> dict:
     return get_cached_payload_or_build(
-        "profit_market_cap_v1",
+        "profit_market_cap_v2",
         stock,
         years,
         builder=lambda: get_profit_market_cap_payload(stock=stock, years=years),
