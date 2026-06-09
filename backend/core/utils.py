@@ -88,6 +88,67 @@ def json_safe_value(value: object) -> object:
     return str(value)
 
 
+def group_year_end_points(points: list[dict]) -> list[dict]:
+    by_year: dict[str, dict] = {}
+    for item in points:
+        date = item.get("date")
+        value = item.get("value")
+        if not date or value is None:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(date))
+        except ValueError:
+            continue
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            continue
+        year = str(parsed.year)
+        existing = by_year.get(year)
+        if existing is None or str(date) > str(existing["date"]):
+            by_year[year] = {"year": year, "date": str(date), "value": float(value)}
+    return [by_year[year] for year in sorted(by_year.keys())]
+
+
+def calculate_yoy(points: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    previous_value: float | None = None
+    for item in points:
+        value = item.get("value")
+        yoy: float | None
+        if (
+            previous_value is None
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or previous_value == 0
+        ):
+            yoy = None
+        else:
+            yoy = (float(value) - previous_value) / abs(previous_value)
+            if not math.isfinite(yoy):
+                yoy = None
+        enriched = dict(item)
+        enriched["yoy"] = yoy
+        result.append(enriched)
+        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+            previous_value = float(value)
+    return result
+
+
+def calculate_ttm(quarter_points: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    window: list[float] = []
+    for item in quarter_points:
+        value = item.get("value")
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            continue
+        window.append(float(value))
+        if len(window) > 4:
+            window.pop(0)
+        enriched = dict(item)
+        enriched["ttm"] = sum(window) if len(window) == 4 else None
+        result.append(enriched)
+    return result
+
+
 def dataframe_preview(df: pd.DataFrame, limit: int = 12) -> dict:
     if df is None or df.empty:
         return {"columns": [], "rows": []}
