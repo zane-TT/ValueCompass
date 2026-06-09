@@ -5809,6 +5809,28 @@ def api_cash_flow_quality(stock: str = "600519", years: str = "8", refresh: str 
         )
 
 
+@app.get("/api/risk-summary")
+def api_risk_summary(stock: str = "600519", period: str | None = None, years: str = "8", refresh: str = ""):
+    stock = stock.strip() or "600519"
+    years_param = years
+    should_refresh = refresh == "1"
+
+    try:
+        normalized_years = normalize_years(years_param, default=8)
+        return build_risk_summary_payload(
+            stock=stock,
+            period=period,
+            years=normalized_years,
+            refresh=should_refresh,
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "stock": stock, "period": period, "years": years_param},
+            status_code=400,
+        )
+
+
 @app.get("/api/peer-companies")
 def api_peer_companies(stock: str = "600519", limit: str = "6", refresh: str = ""):
     stock = normalize_stock_code(stock.strip() or "600519")
