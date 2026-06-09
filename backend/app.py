@@ -1522,6 +1522,46 @@ def get_pe_trend_payload_with_cache(stock: str, years: int, refresh: bool = Fals
     )
 
 
+def build_risk_summary_payload(stock: str, period: str | None, years: int, refresh: bool = False) -> dict:
+    errors: dict[str, str] = {}
+
+    def _safe(key: str, fn: Callable[[], dict]) -> dict | None:
+        try:
+            return fn()
+        except Exception as exc:
+            errors[key] = str(exc)
+            return None
+
+    balance = _safe("balance", lambda: get_balance_payload_with_cache(stock=stock, period=period, refresh=refresh))
+    revenue = _safe("revenueMarketCap", lambda: get_revenue_market_cap_payload_with_cache(stock=stock, years=years, refresh=refresh))
+    profit = _safe("profitMarketCap", lambda: get_profit_market_cap_payload_with_cache(stock=stock, years=years, refresh=refresh))
+    cash_flow = _safe("cashFlowQuality", lambda: get_cash_flow_quality_payload_with_cache(stock=stock, years=years, refresh=refresh))
+
+    return build_risk_summary_from_payloads(stock, balance, profit, revenue, cash_flow, errors=errors)
+
+
+def build_risk_summary_from_payloads(
+    stock: str,
+    balance: dict | None,
+    profit: dict | None,
+    revenue: dict | None,
+    cash_flow: dict | None,
+    errors: dict[str, str] | None = None,
+) -> dict:
+    risks = detect_financial_risks(balance, profit, revenue, cash_flow)
+    report_date = (balance or {}).get("reportDate") or ""
+    payload: dict[str, Any] = {
+        "stock": stock,
+        "title": f"{stock} 财务风险提示",
+        "reportDate": report_date,
+        "risks": risks,
+        "summary": summarize_risks(risks),
+    }
+    if errors:
+        payload["errors"] = errors
+    return payload
+
+
 def load_company_profile(stock: str) -> pd.DataFrame:
     def fetch() -> pd.DataFrame:
         print(f"[INFO] Fetching company profile in subprocess, stock={stock}")
