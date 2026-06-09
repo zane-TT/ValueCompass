@@ -40,8 +40,10 @@ try:
     )
     from .core.openai_settings import get_openai_client, get_openai_settings
     from .core.utils import (
+        calculate_yoy,
         dataframe_preview,
         finite_float,
+        group_year_end_points,
         json_safe_value,
         normalize_period,
         normalize_years,
@@ -73,8 +75,10 @@ except ImportError:
     )
     from core.openai_settings import get_openai_client, get_openai_settings
     from core.utils import (
+        calculate_yoy,
         dataframe_preview,
         finite_float,
+        group_year_end_points,
         json_safe_value,
         normalize_period,
         normalize_years,
@@ -1047,9 +1051,86 @@ def generate_profit_market_cap_conclusion(
     return "净利润和市值走势需要结合观察"
 
 
+def build_performance_summary(profit_sheet_df: pd.DataFrame, years: int) -> dict:
+    try:
+        revenue_bars = build_revenue_bars(profit_sheet_df, years)
+    except ValueError:
+        revenue_bars = []
+    try:
+        profit_bars = build_profit_bars(profit_sheet_df, years)
+    except ValueError:
+        profit_bars = []
+
+    revenue_year_end = [p for p in group_year_end_points(revenue_bars) if str(p.get("date", "")).endswith("12-31")]
+    profit_year_end = [p for p in group_year_end_points(profit_bars) if str(p.get("date", "")).endswith("12-31")]
+    revenue_yearly = calculate_yoy(revenue_year_end)
+    profit_yearly = calculate_yoy(profit_year_end)
+    profit_by_year = {item["year"]: item for item in profit_yearly}
+
+    yearly_summary: list[dict] = []
+    for rev in revenue_yearly:
+        profit = profit_by_year.get(rev["year"])
+        yearly_summary.append(
+            {
+                "year": rev["year"],
+                "revenue": finite_float(rev.get("value")),
+                "revenueYoY": rev.get("yoy"),
+                "netProfit": finite_float(profit.get("value")) if profit else None,
+                "netProfitYoY": profit.get("yoy") if profit else None,
+            }
+        )
+
+    return {
+        "yearlySummary": yearly_summary,
+        "performanceConclusion": generate_performance_conclusion(yearly_summary),
+    }
+
+
+def generate_performance_conclusion(yearly_summary: list[dict]) -> str:
+    if len(yearly_summary) < 2:
+        return "样本不足，暂无法判断业绩趋势。"
+
+    latest = yearly_summary[-1]
+    prev = yearly_summary[-2]
+    year = latest.get("year", "")
+    rev_yoy = latest.get("revenueYoY")
+    np_yoy = latest.get("netProfitYoY")
+    latest_np = latest.get("netProfit")
+    prev_np = prev.get("netProfit")
+
+    def fmt(yoy: float | None) -> str:
+        return f"{yoy:+.1%}" if isinstance(yoy, (int, float)) else "数据缺失"
+
+    if isinstance(latest_np, (int, float)) and isinstance(prev_np, (int, float)):
+        if prev_np < 0 and latest_np >= 0:
+            return f"{year} 年扭亏为盈，归母净利润 {latest_np:.2f} 亿元，盈利状况改善。"
+        if prev_np < 0 and latest_np < prev_np:
+            return f"{year} 年亏损扩大，归母净利润 {latest_np:.2f} 亿元，经营压力加大。"
+        if latest_np < 0 and prev_np >= 0:
+            return f"{year} 年由盈转亏，归母净利润 {latest_np:.2f} 亿元，盈利能力承压。"
+
+    rev_up = isinstance(rev_yoy, (int, float)) and rev_yoy > 0
+    rev_down = isinstance(rev_yoy, (int, float)) and rev_yoy < 0
+    np_up = isinstance(np_yoy, (int, float)) and np_yoy > 0
+    np_down = isinstance(np_yoy, (int, float)) and np_yoy < 0
+
+    if rev_up and np_up:
+        return f"{year} 年增收增利，营收同比 {fmt(rev_yoy)}，净利润同比 {fmt(np_yoy)}。"
+    if rev_up and np_down:
+        return f"{year} 年增收不增利，营收同比 {fmt(rev_yoy)}，净利润同比 {fmt(np_yoy)}。"
+    if rev_down and np_up:
+        return f"{year} 年收入下滑但利润改善，营收同比 {fmt(rev_yoy)}，净利润同比 {fmt(np_yoy)}。"
+    if rev_down and np_down:
+        return f"{year} 年收入与利润双降，营收同比 {fmt(rev_yoy)}，净利润同比 {fmt(np_yoy)}。"
+
+    return f"{year} 年业绩走势不明显，营收同比 {fmt(rev_yoy)}，净利润同比 {fmt(np_yoy)}。"
+
+
 def get_revenue_market_cap_payload(stock: str, years: int) -> dict:
-    revenue_bars = build_revenue_bars(load_profit_sheet(stock), years)
+    profit_sheet = load_profit_sheet(stock)
+    revenue_bars = build_revenue_bars(profit_sheet, years)
     market_cap_line = build_market_cap_line(load_market_cap(stock, years), years, revenue_bars)
+    performance = build_performance_summary(profit_sheet, years)
 
     return {
         "stock": stock,
@@ -1060,6 +1141,8 @@ def get_revenue_market_cap_payload(stock: str, years: int) -> dict:
         "revenueBars": revenue_bars,
         "marketCapLine": market_cap_line,
         "conclusion": generate_revenue_market_cap_conclusion(revenue_bars, market_cap_line),
+        "yearlySummary": performance["yearlySummary"],
+        "performanceConclusion": performance["performanceConclusion"],
     }
 
 
@@ -1203,7 +1286,7 @@ def get_balance_payload_with_cache(stock: str, period: str | None, refresh: bool
 
 def get_revenue_market_cap_payload_with_cache(stock: str, years: int, refresh: bool = False) -> dict:
     return get_cached_payload_or_build(
-        "revenue_market_cap_v2",
+        "revenue_market_cap_v3",
         stock,
         years,
         builder=lambda: get_revenue_market_cap_payload(stock=stock, years=years),
