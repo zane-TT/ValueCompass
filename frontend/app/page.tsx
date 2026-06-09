@@ -90,6 +90,25 @@ type CashFlowQualityResponse = {
   conclusion: string;
 };
 
+type RiskLevel = "high" | "medium" | "observation";
+
+type RiskItem = {
+  level: RiskLevel;
+  category: string;
+  title: string;
+  evidence: string;
+  metric?: string;
+};
+
+type RiskSummaryResponse = {
+  stock: string;
+  title: string;
+  reportDate?: string;
+  risks: RiskItem[];
+  summary: string;
+  errors?: Record<string, string>;
+};
+
 type FinancialPoint = {
   date: string;
   value: number;
@@ -392,6 +411,7 @@ type DashboardDataResponse = {
     peTrend?: PeTrendResponse;
     profitMarketCap?: ProfitMarketCapResponse;
     cashFlowQuality?: CashFlowQualityResponse;
+    riskSummary?: RiskSummaryResponse;
     revenueStructure?: RevenueStructureResponse;
     profitDriverModel?: ProfitDriverModelResponse;
     peerCompanies?: PeerCompaniesResponse;
@@ -405,6 +425,7 @@ type DashboardDataResponse = {
       | "peTrend"
       | "profitMarketCap"
       | "cashFlowQuality"
+      | "riskSummary"
       | "revenueStructure"
       | "profitDriverModel"
       | "peerCompanies"
@@ -1335,6 +1356,7 @@ export default function HomePage() {
   const [peData, setPeData] = useState<PeTrendResponse | null>(null);
   const [profitData, setProfitData] = useState<ProfitMarketCapResponse | null>(null);
   const [cashFlowData, setCashFlowData] = useState<CashFlowQualityResponse | null>(null);
+  const [riskData, setRiskData] = useState<RiskSummaryResponse | null>(null);
   const [revenueStructureData, setRevenueStructureData] = useState<RevenueStructureResponse | null>(null);
   const [industryData, setIndustryData] = useState<IndustryDataResponse | null>(null);
   const [peerData, setPeerData] = useState<PeerCompaniesResponse | null>(null);
@@ -2122,6 +2144,7 @@ export default function HomePage() {
       if (data.peTrend) setPeData(data.peTrend);
       if (data.profitMarketCap) setProfitData(data.profitMarketCap);
       if (data.cashFlowQuality) setCashFlowData(data.cashFlowQuality);
+      if (data.riskSummary) setRiskData(data.riskSummary);
       if (data.revenueStructure) setRevenueStructureData(data.revenueStructure);
       if (data.profitDriverModel) setProfitDriverData(data.profitDriverModel);
       if (data.peerCompanies) setPeerData(data.peerCompanies);
@@ -2341,6 +2364,52 @@ export default function HomePage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        if (!riskData) return null;
+        const levelOrder: Record<RiskLevel, number> = { high: 0, medium: 1, observation: 2 };
+        const levelLabel: Record<RiskLevel, string> = { high: "高风险", medium: "中风险", observation: "观察项" };
+        const grouped: Record<RiskLevel, RiskItem[]> = { high: [], medium: [], observation: [] };
+        for (const item of riskData.risks ?? []) {
+          (grouped[item.level] ?? grouped.observation).push(item);
+        }
+        const orderedLevels = (Object.keys(grouped) as RiskLevel[]).sort(
+          (left, right) => levelOrder[left] - levelOrder[right]
+        );
+        return (
+          <section className="risk-summary-section" aria-label="风险提示">
+            <div className="risk-summary-card">
+              <div className="risk-summary-header">
+                <div className="risk-summary-title">风险提示</div>
+                {riskData.reportDate ? (
+                  <div className="risk-summary-meta">报告期：{riskData.reportDate}</div>
+                ) : null}
+              </div>
+              <div className="risk-summary-conclusion">{riskData.summary}</div>
+              {(riskData.risks ?? []).length === 0 ? (
+                <div className="risk-empty">最近报告期数据未触发任何风险规则。</div>
+              ) : (
+                <div className="risk-list">
+                  {orderedLevels.flatMap((level) =>
+                    grouped[level].map((item, index) => (
+                      <div
+                        key={`${level}-${item.title}-${index}`}
+                        className={`risk-item risk-item-${level}`}
+                      >
+                        <div className="risk-item-head">
+                          <span className={`risk-level-badge risk-level-${level}`}>{levelLabel[level]}</span>
+                          <span className="risk-item-title">{item.title}</span>
+                        </div>
+                        <div className="risk-item-evidence">{item.evidence}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </section>
         );
