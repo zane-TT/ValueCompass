@@ -204,6 +204,68 @@ def qdii_cache_day() -> str:
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
 
 
+def parse_qdii_fee_percent(value: Any) -> float | None:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%", str(value or ""))
+    if not match:
+        return None
+    return finite_float(match.group(1))
+
+
+def fetch_qdii_operation_fee_payload(fund_code: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "managementFeeRate": None,
+        "custodyFeeRate": None,
+        "salesServiceFeeRate": None,
+        "operationFeeSource": "AKShare fund_fee_em 运作费用",
+        "operationFeeError": None,
+    }
+    try:
+        fee_df = ak.fund_fee_em(symbol=fund_code, indicator="运作费用")
+        if fee_df.empty:
+            payload["operationFeeError"] = "empty"
+            return payload
+        row = fee_df.iloc[0].to_dict()
+        for index in range(0, len(row), 2):
+            label = str(row.get(index, "")).strip()
+            value = row.get(index + 1)
+            rate = parse_qdii_fee_percent(value)
+            if "管理费" in label:
+                payload["managementFeeRate"] = rate
+            elif "托管费" in label:
+                payload["custodyFeeRate"] = rate
+            elif "销售服务费" in label:
+                payload["salesServiceFeeRate"] = rate
+        return payload
+    except Exception as exc:
+        payload["operationFeeError"] = str(exc)
+        return payload
+
+
+def attach_qdii_operation_fees(funds: list[dict[str, Any]]) -> None:
+    if not funds:
+        return
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_code = {
+            executor.submit(fetch_qdii_operation_fee_payload, str(fund["fundCode"])): str(fund["fundCode"])
+            for fund in funds
+        }
+        fee_by_code: dict[str, dict[str, Any]] = {}
+        for future in as_completed(future_to_code):
+            fund_code = future_to_code[future]
+            try:
+                fee_by_code[fund_code] = future.result()
+            except Exception as exc:
+                fee_by_code[fund_code] = {
+                    "managementFeeRate": None,
+                    "custodyFeeRate": None,
+                    "salesServiceFeeRate": None,
+                    "operationFeeSource": "AKShare fund_fee_em 运作费用",
+                    "operationFeeError": str(exc),
+                }
+        for fund in funds:
+            fund.update(fee_by_code.get(str(fund["fundCode"]), {}))
+
+
 def build_qdii_nasdaq_funds_payload() -> dict[str, Any]:
     purchase_df = ak.fund_purchase_em()
     if purchase_df.empty:
@@ -251,6 +313,7 @@ def build_qdii_nasdaq_funds_payload() -> dict[str, Any]:
             }
         )
 
+    attach_qdii_operation_fees(funds)
     funds.sort(key=lambda item: (item["trackingIndex"] != "纳斯达克100", item["market"], item["fundCode"]))
     total_count = len(funds)
     manager_count = len({item["managerName"] for item in funds if item["managerName"] != "待补充"})
@@ -6122,7 +6185,7 @@ def api_market_buffett_indicator(market: str = "us", years: str = "5", refresh: 
 def api_qdii_nasdaq_funds(refresh: str = ""):
     try:
         return get_cached_payload_or_build(
-            "qdii_nasdaq_funds_v2",
+            "qdii_nasdaq_funds_v3",
             "all",
             qdii_cache_day(),
             builder=build_qdii_nasdaq_funds_payload,

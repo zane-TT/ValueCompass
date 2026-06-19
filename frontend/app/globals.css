@@ -2238,7 +2238,7 @@ button {
 .qdii-table-head,
 .qdii-table-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.15fr) minmax(170px, 1fr) minmax(110px, 0.65fr) minmax(120px, 0.65fr) minmax(120px, 0.7fr) minmax(150px, 0.8fr);
+  grid-template-columns: minmax(180px, 1.15fr) minmax(160px, 0.9fr) minmax(100px, 0.55fr) minmax(110px, 0.6fr) minmax(110px, 0.6fr) minmax(130px, 0.7fr) minmax(140px, 0.7fr);
   gap: 10px;
   align-items: center;
   border: 2px solid var(--soft-line);

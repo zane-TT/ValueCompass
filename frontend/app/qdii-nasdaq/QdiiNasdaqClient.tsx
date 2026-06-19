@@ -25,6 +25,11 @@ type QdiiFund = {
   latestNav?: number | null;
   navDate?: string | null;
   subscribeStatusRaw?: string;
+  feeRate?: number | null;
+  managementFeeRate?: number | null;
+  custodyFeeRate?: number | null;
+  salesServiceFeeRate?: number | null;
+  operationFeeError?: string | null;
   sourceStatus: string;
   sourceNote: string;
 };
@@ -60,6 +65,11 @@ function formatAmount(value?: number | null, status?: SubscribeStatus) {
 function formatNumber(value?: number | null, digits = 1) {
   if (value === undefined || value === null || Number.isNaN(value)) return "-";
   return value.toLocaleString("zh-CN", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function formatRate(value?: number | null) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return `${value.toFixed(2)}%`;
 }
 
 function getStatusLabel(status: SubscribeStatus) {
@@ -232,6 +242,7 @@ export default function QdiiNasdaqClient() {
                 <span>市场/类型</span>
                 <span>申购状态</span>
                 <span>额度</span>
+                <span>管理费用</span>
                 <span>规模/申赎单位</span>
               </div>
               {filteredFunds.map((fund) => (
@@ -256,6 +267,12 @@ export default function QdiiNasdaqClient() {
                   <div>
                     <strong>{formatAmount(fund.dailyLimitAmount, fund.subscribeStatus)}</strong>
                     <em>单日/账户口径</em>
+                  </div>
+                  <div>
+                    <strong>{formatRate(fund.managementFeeRate)}</strong>
+                    <em>
+                      托管 {formatRate(fund.custodyFeeRate)} / 销服 {formatRate(fund.salesServiceFeeRate)}
+                    </em>
                   </div>
                   <div>
                     <strong>{fund.latestNav ? formatNumber(fund.latestNav, 4) : formatNumber(fund.latestScaleYi)}</strong>
