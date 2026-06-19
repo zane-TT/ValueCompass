@@ -103,6 +103,206 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+QDII_NASDAQ_FUND_SEED: list[dict[str, Any]] = [
+    {
+        "fundCode": "513100",
+        "fundName": "纳指ETF",
+        "managerName": "国泰基金管理有限公司",
+        "market": "SH",
+        "fundType": "ETF",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "open",
+        "redeemStatus": "open",
+        "dailyLimitAmount": None,
+        "singleLimitAmount": None,
+        "creationUnit": 1_000_000,
+        "latestScaleYi": 104.3,
+        "sourceStatus": "seed",
+        "sourceNote": "示例口径；生产环境请替换为交易所 PCF、基金公司公告或授权数据商字段。",
+    },
+    {
+        "fundCode": "513300",
+        "fundName": "纳斯达克ETF",
+        "managerName": "华夏基金管理有限公司",
+        "market": "SH",
+        "fundType": "ETF",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "limited",
+        "redeemStatus": "open",
+        "dailyLimitAmount": 1_000,
+        "singleLimitAmount": 1_000,
+        "creationUnit": 1_000_000,
+        "latestScaleYi": 88.6,
+        "sourceStatus": "seed",
+        "sourceNote": "限购金额需以基金公司最新公告为准。",
+    },
+    {
+        "fundCode": "513110",
+        "fundName": "纳指100ETF",
+        "managerName": "华泰柏瑞基金管理有限公司",
+        "market": "SH",
+        "fundType": "ETF",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "paused",
+        "redeemStatus": "open",
+        "dailyLimitAmount": 0,
+        "singleLimitAmount": 0,
+        "creationUnit": 1_000_000,
+        "latestScaleYi": 36.8,
+        "sourceStatus": "seed",
+        "sourceNote": "暂停/恢复申购应由公告解析任务每日覆盖。",
+    },
+    {
+        "fundCode": "159501",
+        "fundName": "纳斯达克指数ETF",
+        "managerName": "嘉实基金管理有限公司",
+        "market": "SZ",
+        "fundType": "ETF",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "open",
+        "redeemStatus": "open",
+        "dailyLimitAmount": None,
+        "singleLimitAmount": None,
+        "creationUnit": 1_000_000,
+        "latestScaleYi": 62.4,
+        "sourceStatus": "seed",
+        "sourceNote": "深交所 ETF 需接入产品列表与 PCF 申赎清单。",
+    },
+    {
+        "fundCode": "159513",
+        "fundName": "纳斯达克100指数ETF",
+        "managerName": "大成基金管理有限公司",
+        "market": "SZ",
+        "fundType": "ETF",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "limited",
+        "redeemStatus": "open",
+        "dailyLimitAmount": 10_000,
+        "singleLimitAmount": 10_000,
+        "creationUnit": 1_000_000,
+        "latestScaleYi": 28.9,
+        "sourceStatus": "seed",
+        "sourceNote": "限额按基金公告、直销/代销渠道分别维护。",
+    },
+    {
+        "fundCode": "159509",
+        "fundName": "纳指科技ETF",
+        "managerName": "景顺长城基金管理有限公司",
+        "market": "SZ",
+        "fundType": "ETF",
+        "trackingIndex": "纳斯达克科技",
+        "subscribeStatus": "open",
+        "redeemStatus": "open",
+        "dailyLimitAmount": None,
+        "singleLimitAmount": None,
+        "creationUnit": 1_000_000,
+        "latestScaleYi": 31.2,
+        "sourceStatus": "seed",
+        "sourceNote": "该基金跟踪主题为纳指科技，和纳斯达克100需分组展示。",
+    },
+    {
+        "fundCode": "270042",
+        "fundName": "广发纳斯达克100ETF联接人民币A",
+        "managerName": "广发基金管理有限公司",
+        "market": "OTC",
+        "fundType": "ETF联接",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "limited",
+        "redeemStatus": "open",
+        "dailyLimitAmount": 1_000,
+        "singleLimitAmount": 1_000,
+        "creationUnit": None,
+        "latestScaleYi": 76.5,
+        "sourceStatus": "seed",
+        "sourceNote": "场外基金申购状态需接基金公司公告或授权销售平台。",
+    },
+    {
+        "fundCode": "000834",
+        "fundName": "大成纳斯达克100ETF联接人民币A",
+        "managerName": "大成基金管理有限公司",
+        "market": "OTC",
+        "fundType": "ETF联接",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "paused",
+        "redeemStatus": "open",
+        "dailyLimitAmount": 0,
+        "singleLimitAmount": 0,
+        "creationUnit": None,
+        "latestScaleYi": 22.7,
+        "sourceStatus": "seed",
+        "sourceNote": "状态仅作系统接入样例，需由公告任务覆盖。",
+    },
+    {
+        "fundCode": "040046",
+        "fundName": "华安纳斯达克100ETF联接人民币A",
+        "managerName": "华安基金管理有限公司",
+        "market": "OTC",
+        "fundType": "ETF联接",
+        "trackingIndex": "纳斯达克100",
+        "subscribeStatus": "open",
+        "redeemStatus": "open",
+        "dailyLimitAmount": None,
+        "singleLimitAmount": None,
+        "creationUnit": None,
+        "latestScaleYi": 18.4,
+        "sourceStatus": "seed",
+        "sourceNote": "建议按 A/C、人民币/美元份额拆分存储。",
+    },
+]
+
+
+def build_qdii_nasdaq_funds_payload() -> dict[str, Any]:
+    funds = [dict(item) for item in QDII_NASDAQ_FUND_SEED]
+    total_count = len(funds)
+    manager_count = len({item["managerName"] for item in funds})
+    etf_count = sum(1 for item in funds if item["fundType"] == "ETF")
+    otc_count = sum(1 for item in funds if item["market"] == "OTC")
+    open_count = sum(1 for item in funds if item["subscribeStatus"] == "open")
+    limited_count = sum(1 for item in funds if item["subscribeStatus"] == "limited")
+    paused_count = sum(1 for item in funds if item["subscribeStatus"] == "paused")
+    total_scale_yi = sum(float(item.get("latestScaleYi") or 0) for item in funds)
+    available_count = open_count + limited_count
+
+    return {
+        "status": "seed",
+        "theme": "qdii_nasdaq",
+        "asOf": datetime.now(timezone(timedelta(hours=8))).isoformat(),
+        "summary": {
+            "totalCount": total_count,
+            "managerCount": manager_count,
+            "etfCount": etf_count,
+            "otcCount": otc_count,
+            "availableCount": available_count,
+            "openCount": open_count,
+            "limitedCount": limited_count,
+            "pausedCount": paused_count,
+            "totalScaleYi": round(total_scale_yi, 2),
+        },
+        "funds": funds,
+        "sourcePlan": [
+            {
+                "name": "交易所 ETF/PCF",
+                "coverage": "场内 ETF、最小申购赎回单位、是否开放一级市场申赎",
+                "integration": "上交所/深交所公开产品列表 + 每日 ETF 申购赎回清单，或 Wind/Choice/聚源字段。",
+            },
+            {
+                "name": "基金公司公告",
+                "coverage": "暂停申购、恢复申购、限制大额申购、单日/单账户限额",
+                "integration": "每日公告抓取后用关键词和金额规则解析，人工复核异常公告。",
+            },
+            {
+                "name": "授权数据商",
+                "coverage": "基金主数据、规模、费率、渠道申购状态、A/C/美元份额映射",
+                "integration": "生产建议接 Wind、Choice、聚源或 iFinD，再用公告解析做校验。",
+            },
+        ],
+        "dataGaps": [
+            "当前接口内置的是系统接入种子数据，不代表最新完整清单。",
+            "生产环境需要把 subscribeStatus、dailyLimitAmount、creationUnit 按每日数据源刷新。",
+            "同一基金在直销、代销、券商场内一级市场的额度可能不同，建议按 channel 维度拆表。",
+        ],
+    }
+
 AI_ANALYSIS_SYSTEM_PROMPT = """
 你是一名A股财报分析助手。
 
@@ -5912,6 +6112,26 @@ def api_market_buffett_indicator(market: str = "us", years: str = "5", refresh: 
         print(f"[ERROR] {exc}")
         return JSONResponse(
             {"error": str(exc), "market": market, "years": years},
+            status_code=400,
+        )
+
+
+@app.get("/api/qdii-nasdaq-funds")
+def api_qdii_nasdaq_funds(refresh: str = ""):
+    try:
+        return get_cached_payload_or_build(
+            "qdii_nasdaq_funds_v1",
+            "all",
+            builder=build_qdii_nasdaq_funds_payload,
+            refresh=refresh == "1",
+        )
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {
+                "error": str(exc),
+                "source": "qdii_nasdaq_funds",
+            },
             status_code=400,
         )
 

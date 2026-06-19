@@ -56,7 +56,7 @@ type SystemStatusProps = {
 };
 
 type AppShellProps = {
-  active: "stocks" | "markets" | "industry" | "superinvestors";
+  active: "stocks" | "markets" | "industry" | "qdii" | "superinvestors";
   children: ReactNode;
 };
 
@@ -83,6 +83,14 @@ const NAV_ITEMS = [
     label: "行业监控",
     eyebrow: "利润驱动",
     initials: "ID",
+    enabled: true,
+  },
+  {
+    id: "qdii",
+    href: "/qdii-nasdaq",
+    label: "QDII 纳指",
+    eyebrow: "申购状态 额度",
+    initials: "QD",
     enabled: true,
   },
   {
