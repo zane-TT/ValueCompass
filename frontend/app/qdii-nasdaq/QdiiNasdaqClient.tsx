@@ -22,6 +22,9 @@ type QdiiFund = {
   singleLimitAmount?: number | null;
   creationUnit?: number | null;
   latestScaleYi?: number | null;
+  latestNav?: number | null;
+  navDate?: string | null;
+  subscribeStatusRaw?: string;
   sourceStatus: string;
   sourceNote: string;
 };
@@ -32,6 +35,7 @@ type QdiiPayload = {
   asOf: string;
   summary: {
     totalCount: number;
+    nasdaq100Count?: number;
     managerCount: number;
     etfCount: number;
     otcCount: number;
@@ -46,9 +50,9 @@ type QdiiPayload = {
   dataGaps: string[];
 };
 
-function formatAmount(value?: number | null) {
+function formatAmount(value?: number | null, status?: SubscribeStatus) {
   if (value === undefined || value === null) return "不限额";
-  if (value <= 0) return "不可申购";
+  if (value <= 0) return status === "paused" ? "不可申购" : "额度见渠道";
   if (value >= 10000) return `${(value / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 万元`;
   return `${value.toLocaleString("zh-CN")} 元`;
 }
@@ -106,7 +110,7 @@ export default function QdiiNasdaqClient() {
       }
       const payload = (await response.json()) as QdiiPayload;
       setData(payload);
-      setStatus(payload.status === "seed" ? "已加载种子数据，等待接入授权数据源" : "QDII 纳指基金数据已加载");
+      setStatus(payload.status === "live" ? "已加载今日实时源缓存" : "QDII 纳指基金数据已加载");
     } catch (loadError) {
       const message =
         loadError instanceof DOMException && loadError.name === "AbortError"
@@ -170,7 +174,7 @@ export default function QdiiNasdaqClient() {
               <article>
                 <span>基金数量</span>
                 <strong>{data.summary.totalCount}</strong>
-                <em>ETF {data.summary.etfCount} / 场外 {data.summary.otcCount}</em>
+                <em>纳指100 {data.summary.nasdaq100Count ?? "-"} / ETF {data.summary.etfCount}</em>
               </article>
               <article>
                 <span>基金公司</span>
@@ -193,8 +197,8 @@ export default function QdiiNasdaqClient() {
               </article>
               <article>
                 <span>总规模</span>
-                <strong>{formatNumber(data.summary.totalScaleYi)} 亿</strong>
-                <em>样例口径</em>
+                <strong>{data.summary.totalScaleYi ? `${formatNumber(data.summary.totalScaleYi)} 亿` : "待接入"}</strong>
+                <em>需接交易所/数据商规模</em>
               </article>
             </div>
 
@@ -250,12 +254,18 @@ export default function QdiiNasdaqClient() {
                     <em>赎回：{fund.redeemStatus === "open" ? "开放" : fund.redeemStatus}</em>
                   </div>
                   <div>
-                    <strong>{formatAmount(fund.dailyLimitAmount)}</strong>
+                    <strong>{formatAmount(fund.dailyLimitAmount, fund.subscribeStatus)}</strong>
                     <em>单日/账户口径</em>
                   </div>
                   <div>
-                    <strong>{formatNumber(fund.latestScaleYi)} 亿</strong>
-                    <em>{fund.creationUnit ? `申赎单位 ${fund.creationUnit.toLocaleString("zh-CN")} 份` : "场外份额"}</em>
+                    <strong>{fund.latestNav ? formatNumber(fund.latestNav, 4) : formatNumber(fund.latestScaleYi)}</strong>
+                    <em>
+                      {fund.navDate
+                        ? `净值日期 ${fund.navDate}`
+                        : fund.creationUnit
+                          ? `申赎单位 ${fund.creationUnit.toLocaleString("zh-CN")} 份`
+                          : "规模待接入"}
+                    </em>
                   </div>
                 </div>
               ))}
