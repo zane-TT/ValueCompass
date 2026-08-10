@@ -56,7 +56,7 @@ type SystemStatusProps = {
 };
 
 type AppShellProps = {
-  active: "stocks" | "markets" | "industry" | "qdii" | "superinvestors";
+  active: "stocks" | "performanceCompare" | "markets" | "industry" | "qdii" | "superinvestors";
   children: ReactNode;
 };
 
@@ -67,6 +67,14 @@ const NAV_ITEMS = [
     label: "个股分析",
     eyebrow: "A 股公司",
     initials: "ST",
+    enabled: true,
+  },
+  {
+    id: "performanceCompare",
+    href: "/performance-compare",
+    label: "业绩对比",
+    eyebrow: "多公司同指标",
+    initials: "PC",
     enabled: true,
   },
   {

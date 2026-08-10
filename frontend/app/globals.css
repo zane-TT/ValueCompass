@@ -2339,6 +2339,279 @@ button {
   margin-top: 14px;
 }
 
+.compare-hero,
+.compare-workbench,
+.compare-chart-card,
+.compare-company-card {
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hard);
+}
+
+.compare-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 0.72fr);
+  gap: 18px;
+  align-items: start;
+  background: var(--paper);
+  padding: 22px;
+}
+
+.compare-hero h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(36px, 5vw, 70px);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.compare-hero p,
+.compare-chart-head p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.compare-add-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.compare-add-panel label {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.compare-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.compare-search-row input {
+  min-width: 0;
+  min-height: 42px;
+  border: 2px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  padding: 0 12px;
+  box-shadow: 2px 2px 0 var(--ink);
+  font-weight: 850;
+}
+
+.compare-search-row button,
+.compare-chart-head button,
+.compare-company-card button,
+.compare-suggestion-row button,
+.compare-control-group button {
+  border: 2px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+  cursor: pointer;
+  font-weight: 950;
+}
+
+.compare-search-row button,
+.compare-chart-head button,
+.compare-company-card button {
+  min-height: 42px;
+  padding: 0 14px;
+}
+
+.compare-search-row button,
+.compare-chart-head button {
+  background: #101820;
+  color: #fff;
+}
+
+.compare-suggestion-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compare-suggestion-row button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.compare-suggestion-row span {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compare-error {
+  border: 2px solid rgba(192, 54, 44, 0.42);
+  background: var(--danger-bg);
+  color: #7f1d1d;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.compare-workbench {
+  display: grid;
+  gap: 16px;
+  background: #f3f0e7;
+  padding: 16px;
+}
+
+.compare-control-strip {
+  display: grid;
+  gap: 14px;
+}
+
+.compare-control-group {
+  display: grid;
+  gap: 10px;
+}
+
+.compare-control-group.metric-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.compare-control-group.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.compare-control-group button {
+  min-height: 62px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.compare-control-group button.active {
+  background: #ccff00;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.compare-control-group button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+}
+
+.compare-control-group strong,
+.compare-control-group span {
+  display: block;
+}
+
+.compare-control-group strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.compare-control-group span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.compare-segment-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.45fr) minmax(360px, 0.55fr);
+  gap: 12px;
+}
+
+.compare-chart-card {
+  position: relative;
+  background: var(--paper);
+  padding: 16px;
+}
+
+.compare-chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.compare-chart-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.compare-chart-box {
+  width: 100%;
+  height: 430px;
+  border: 1px solid var(--soft-line);
+  background: #fff;
+}
+
+.compare-empty {
+  position: absolute;
+  inset: 104px 16px 16px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--soft-line);
+  background: rgba(255, 253, 247, 0.86);
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.compare-company-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compare-company-card {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  background: var(--paper);
+  padding: 12px;
+}
+
+.compare-company-card.error {
+  background: var(--danger-bg);
+}
+
+.compare-company-card.loading {
+  background: var(--paper-cool);
+}
+
+.compare-company-card strong,
+.compare-company-card span,
+.compare-company-card b,
+.compare-company-card em {
+  display: block;
+}
+
+.compare-company-card strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.compare-company-card span,
+.compare-company-card em {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  font-style: normal;
+}
+
+.compare-company-card b {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.compare-company-card button {
+  background: #fff;
+}
+
 .business-type-chip {
   display: inline-flex;
   min-height: 34px;
@@ -2990,6 +3263,13 @@ button {
 
   .market-valuation-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compare-hero,
+  .compare-control-group.metric-grid,
+  .compare-segment-row,
+  .compare-company-grid {
+    grid-template-columns: 1fr;
   }
 
   .auto-strip,
