@@ -6134,6 +6134,27 @@ def api_peer_companies(stock: str = "600519", limit: str = "6", refresh: str = "
         )
 
 
+@app.get("/api/company-name")
+def api_company_name(stock: str = "600519", refresh: str = ""):
+    stock = normalize_stock_code(stock.strip() or "600519")
+
+    try:
+        profile_payload = get_company_profile_payload_with_cache(stock=stock, refresh=refresh == "1")
+        company_name = compact_company_name(profile_payload.get("companyName"), stock)
+        return {
+            "stock": stock,
+            "name": company_name,
+            "companyName": profile_payload.get("companyName", company_name),
+            "industry": profile_payload.get("industry", ""),
+        }
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return JSONResponse(
+            {"error": str(exc), "stock": stock},
+            status_code=400,
+        )
+
+
 @app.get("/api/profit-driver-model")
 def api_profit_driver_model(stock: str = "600519", refresh: str = ""):
     stock = normalize_stock_code(stock.strip() or "600519")

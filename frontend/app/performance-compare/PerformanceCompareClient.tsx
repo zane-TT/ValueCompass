@@ -49,6 +49,12 @@ type CashFlowResponse = {
   operatingCashFlow?: MetricPoint[];
 };
 
+type CompanyNameResponse = {
+  stock: string;
+  name?: string;
+  companyName?: string;
+};
+
 type MetricConfig = {
   id: MetricId;
   label: string;
@@ -70,6 +76,8 @@ const COMPANIES: Company[] = [
   { code: "601899", name: "紫金矿业" },
   { code: "600309", name: "万华化学" },
   { code: "002475", name: "立讯精密" },
+  { code: "002563", name: "森马服饰" },
+  { code: "600398", name: "海澜之家" },
 ];
 
 async function fetchJson<T>(url: string, fallbackMessage: string): Promise<T> {
@@ -151,11 +159,28 @@ function findCompany(input: string) {
   if (!keyword) return null;
   return (
     COMPANIES.find((item) => item.code === keyword || item.name.toLowerCase() === keyword) ??
-    COMPANIES.find((item) => item.code.includes(keyword) || item.name.toLowerCase().includes(keyword)) ?? {
-      code: keyword,
-      name: keyword,
-    }
+    COMPANIES.find((item) => item.code.includes(keyword) || item.name.toLowerCase().includes(keyword)) ??
+    null
   );
+}
+
+async function resolveCompany(input: string): Promise<Company | null> {
+  const keyword = input.trim();
+  if (!keyword) return null;
+
+  const localCompany = findCompany(keyword);
+  if (localCompany) return localCompany;
+
+  const stockCode = keyword.match(/\d{6}/)?.[0];
+  if (!stockCode) return null;
+
+  const params = new URLSearchParams({ stock: stockCode });
+  const data = await fetchJson<CompanyNameResponse>(`${API_BASE}/api/company-name?${params.toString()}`, "公司名称加载失败");
+  const name = (data.name || data.companyName || "").trim();
+  if (!name) {
+    throw new Error(`没有找到 ${stockCode} 对应的公司名称`);
+  }
+  return { code: data.stock || stockCode, name };
 }
 
 function formatNumber(value?: number | null, digits = 2) {
@@ -181,6 +206,7 @@ export default function PerformanceCompareClient() {
   const [input, setInput] = useState("");
   const [series, setSeries] = useState<CompanySeries[]>([]);
   const [error, setError] = useState("");
+  const [isResolvingCompany, setIsResolvingCompany] = useState(false);
 
   const activeMetric = METRICS.find((item) => item.id === metricId) ?? METRICS[0];
   const suggestions = useMemo(() => {
@@ -220,6 +246,23 @@ export default function PerformanceCompareClient() {
     const loaded = await loadCompany(company);
     setSeries((current) => current.map((item) => (item.code === company.code ? loaded : item)));
     setInput("");
+  }
+
+  async function addCompanyFromInput() {
+    setError("");
+    setIsResolvingCompany(true);
+    try {
+      const company = await resolveCompany(input);
+      if (!company) {
+        setError("请输入 6 位股票代码，或输入已收录的公司名称");
+        return;
+      }
+      await addCompany(company);
+    } catch (resolveError) {
+      setError(resolveError instanceof Error ? resolveError.message : "公司名称加载失败");
+    } finally {
+      setIsResolvingCompany(false);
+    }
   }
 
   async function reloadAll(nextMetric = activeMetric, nextYears = years) {
@@ -316,19 +359,16 @@ export default function PerformanceCompareClient() {
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
-                    const company = findCompany(input);
-                    if (company) void addCompany(company);
+                    void addCompanyFromInput();
                   }
                 }}
               />
               <button
                 type="button"
-                onClick={() => {
-                  const company = findCompany(input);
-                  if (company) void addCompany(company);
-                }}
+                disabled={isResolvingCompany}
+                onClick={() => void addCompanyFromInput()}
               >
-                添加
+                {isResolvingCompany ? "查询中" : "添加"}
               </button>
             </div>
           </label>
